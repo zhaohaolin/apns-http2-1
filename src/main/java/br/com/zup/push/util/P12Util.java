@@ -12,66 +12,78 @@ import java.util.Objects;
 
 public class P12Util {
 	
-	private static final String UDID_KEY = "UID";
-
-    public static PrivateKeyEntry getFirstPrivateKeyEntryFromP12InputStream(final KeyStore keyStore, final String password) throws KeyStoreException, IOException {
-        Objects.requireNonNull(password, "Password may be blank, but must not be null.");
-
-        final Enumeration<String> aliases = keyStore.aliases();
-        final KeyStore.PasswordProtection passwordProtection = new KeyStore.PasswordProtection(password.toCharArray());
- 
-        while (aliases.hasMoreElements()) {
-            final String alias = aliases.nextElement();
-
-            KeyStore.Entry entry;
-            
-            try {
-                try {
-                    entry = keyStore.getEntry(alias, passwordProtection);
-                } catch (final UnsupportedOperationException e) {
-                    entry = keyStore.getEntry(alias, null);
-                }
-            } catch (final UnrecoverableEntryException | NoSuchAlgorithmException e) {
-                throw new KeyStoreException(e);
-            }
-
-            if (entry instanceof KeyStore.PrivateKeyEntry) {
-                return (PrivateKeyEntry) entry;
-            }
-        }
-
-        throw new KeyStoreException("Key store did not contain any private key entries.");
-    }
-
-    public static ArrayList<String> getIdentitiesForP12File(final KeyStore keyStore) throws KeyStoreException, IOException {
-    	final Enumeration<String> aliases = keyStore.aliases();
-    	ArrayList<String> identifiers = new ArrayList<String>();
-    	while (aliases.hasMoreElements()) {
-            String alias = (String) aliases.nextElement();
-            X509Certificate c = (X509Certificate) keyStore.getCertificate(alias);
-            Principal subject = c.getSubjectDN();
-            String subjectArray[] = subject.toString().split(",");
-            for (String s : subjectArray) {
-                String[] str = s.trim().split("=");
-                String key = str[0];
-                String value = str[1];
-                System.out.println(key + " - " + value);
-                if(UDID_KEY.equals(key))
-                	identifiers.add(value);
-            }
-        }
-    	
-    	return identifiers;
-    }
-
-    public static KeyStore loadPCKS12KeyStore(final InputStream p12InputStream, final String password) throws KeyStoreException, IOException {
-        final KeyStore keyStore = KeyStore.getInstance("PKCS12");
-
-        try {
-            keyStore.load(p12InputStream, password.toCharArray());
-        } catch (NoSuchAlgorithmException | CertificateException e) {
-            throw new KeyStoreException(e);
-        }
-        return keyStore;
-    }
+	private static final String	UDID_KEY	= "UID";
+	
+	public static PrivateKeyEntry getFirstPrivateKeyEntryFromP12InputStream(
+			final KeyStore keyStore, final String password)
+			throws KeyStoreException, IOException {
+		Objects.requireNonNull(password,
+				"Password may be blank, but must not be null.");
+		
+		final Enumeration<String> aliases = keyStore.aliases();
+		final KeyStore.PasswordProtection passwordProtection = new KeyStore.PasswordProtection(
+				password.toCharArray());
+		
+		while (aliases.hasMoreElements()) {
+			final String alias = aliases.nextElement();
+			
+			KeyStore.Entry entry;
+			
+			try {
+				try {
+					entry = keyStore.getEntry(alias, passwordProtection);
+				} catch (final UnsupportedOperationException e) {
+					entry = keyStore.getEntry(alias, null);
+				}
+			} catch (final UnrecoverableEntryException
+					| NoSuchAlgorithmException e) {
+				throw new KeyStoreException(e);
+			}
+			
+			if (entry instanceof KeyStore.PrivateKeyEntry) {
+				return (PrivateKeyEntry) entry;
+			}
+		}
+		
+		throw new KeyStoreException(
+				"Key store did not contain any private key entries.");
+	}
+	
+	public static ArrayList<String> getIdentitiesForP12File(
+			final KeyStore keyStore) throws KeyStoreException, IOException {
+		final Enumeration<String> aliases = keyStore.aliases();
+		ArrayList<String> identifiers = new ArrayList<String>();
+		while (aliases.hasMoreElements()) {
+			String alias = (String) aliases.nextElement();
+			X509Certificate c = (X509Certificate) keyStore
+					.getCertificate(alias);
+			Principal subject = c.getSubjectDN();
+			String subjectArray[] = subject.toString().split(",");
+			for (String s : subjectArray) {
+				String[] str = s.split("=");
+				if (str.length > 1) {
+					String key = str[0];
+					String value = str[1];
+					// System.out.println(key + " - " + value);
+					if (UDID_KEY.equals(key.trim())) {
+						identifiers.add(value);
+					}
+				}
+			}
+		}
+		
+		return identifiers;
+	}
+	
+	public static KeyStore loadPCKS12KeyStore(final InputStream p12InputStream,
+			final String password) throws KeyStoreException, IOException {
+		final KeyStore keyStore = KeyStore.getInstance("PKCS12");
+		
+		try {
+			keyStore.load(p12InputStream, password.toCharArray());
+		} catch (NoSuchAlgorithmException | CertificateException e) {
+			throw new KeyStoreException(e);
+		}
+		return keyStore;
+	}
 }
