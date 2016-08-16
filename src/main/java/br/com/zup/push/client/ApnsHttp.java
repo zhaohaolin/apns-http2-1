@@ -110,12 +110,12 @@ public class ApnsHttp {
         return sendNotificationFuture;
     }
     
-    public ApnsHttp withProxy(ProxyConfig proxyConfig) {
-    	final InetSocketAddress inetSocketAddress = new InetSocketAddress(proxyConfig.getAddress(), proxyConfig.getPort());
-    	ProxyHandlerFactory proxyFactory = createProxyFactory(proxyConfig.getProtocol(), proxyConfig.getUsername().get(), proxyConfig.getPassword().get(), inetSocketAddress);
-    	this.httpClient.setProxyHandlerFactory(proxyFactory);
-        return this;
-    }
+//    public ApnsHttp withProxy(ProxyConfig proxyConfig) {
+//    	final InetSocketAddress inetSocketAddress = new InetSocketAddress(proxyConfig.getAddress(), proxyConfig.getPort());
+//    	ProxyHandlerFactory proxyFactory = createProxyFactory(proxyConfig.getProtocol(), proxyConfig.getUsername().get(), proxyConfig.getPassword().get(), inetSocketAddress);
+//    	this.httpClient.setProxyHandlerFactory(proxyFactory);
+//        return this;
+//    }
     
     public ApnsHttp productionMode() {
         this.sandboxEnvironment = false;
