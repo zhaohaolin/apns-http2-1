@@ -10,9 +10,14 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.Objects;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class P12Util {
 	
 	private static final String	UDID_KEY	= "UID";
+	private final static Logger	LOG			= LoggerFactory
+													.getLogger(P12Util.class);
 	
 	public static PrivateKeyEntry getFirstPrivateKeyEntryFromP12InputStream(
 			final KeyStore keyStore, final String password)
@@ -59,6 +64,8 @@ public class P12Util {
 					.getCertificate(alias);
 			Principal subject = c.getSubjectDN();
 			String subjectArray[] = subject.toString().split(",");
+			
+			LOG.info("subject=[{}]", subject);
 			for (String s : subjectArray) {
 				String[] str = s.split("=");
 				if (str.length > 1) {
@@ -70,6 +77,8 @@ public class P12Util {
 					}
 				}
 			}
+			
+			LOG.info("return topic list identifiers=[{}]", identifiers);
 		}
 		
 		return identifiers;

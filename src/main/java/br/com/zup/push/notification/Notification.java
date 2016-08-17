@@ -91,8 +91,9 @@ public class Notification {
 	 */
 	public static class Builder {
 		
-		private final HashMap<String, Object>	root, aps, alert;
+		private final HashMap<String, Object>	root, aps;		// alert;
 		private final String					token;
+		private String							alert;
 		private String							topic	= null;
 		
 		/**
@@ -104,16 +105,22 @@ public class Notification {
 			this.token = token;
 			root = new HashMap<>();
 			aps = new HashMap<>();
-			alert = new HashMap<>();
+			// alert = new HashMap<>();
 		}
 		
-		public Builder alertBody(String body) {
-			alert.put("body", body);
-			return this;
-		}
+		// public Builder alertBody(String body) {
+		// alert.put("body", body);
+		// return this;
+		// }
+		//
+		// public Builder alertTitle(String title) {
+		// alert.put("title", title);
+		// return this;
+		// }
 		
-		public Builder alertTitle(String title) {
-			alert.put("title", title);
+		public Builder alert(String alert) {
+			// alert.put("title", title);
+			this.alert = alert;
 			return this;
 		}
 		

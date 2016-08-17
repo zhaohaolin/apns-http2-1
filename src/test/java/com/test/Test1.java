@@ -4,7 +4,7 @@
  * Creator:     joe.zhao(zhaohaolin@hikvision.com.cn)
  * Create-Date: 下午7:28:54
  */
-package br.com.zup.push;
+package com.test;
 
 import java.util.HashMap;
 import java.util.Map;

@@ -67,6 +67,7 @@ import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.SucceededFuture;
 
 class PushHttpClient<T extends HttpPushNotification> {
+	
 	private static final String									EPOLL_EVENT_LOOP_GROUP_CLASS	= "io.netty.channel.epoll.EpollEventLoopGroup";
 	private static final String									EPOLL_SOCKET_CHANNEL_CLASS		= "io.netty.channel.epoll.EpollSocketChannel";
 	
@@ -548,36 +549,35 @@ class PushHttpClient<T extends HttpPushNotification> {
 	
 	public Future<PushNotificationResponse<T>> sendNotification(
 			final T notification) {
-		final Future<PushNotificationResponse<T>> responseFuture;
+		final Future<PushNotificationResponse<T>> respFuture;
 		final long notificationId = this.nextNotificationId.getAndIncrement();
 		
 		verifyTopic(notification);
 		
-		final ChannelPromise connectionReadyPromise = this.connectionReadyPromise;
+		final ChannelPromise connReadyPromise = this.connectionReadyPromise;
 		
-		if (connectionReadyPromise != null
-				&& connectionReadyPromise.isSuccess()
-				&& connectionReadyPromise.channel().isActive()) {
-			final DefaultPromise<PushNotificationResponse<T>> responsePromise = new DefaultPromise<>(
-					connectionReadyPromise.channel().eventLoop());
+		if (connReadyPromise != null && connReadyPromise.isSuccess()
+				&& connReadyPromise.channel().isActive()) {
+			final DefaultPromise<PushNotificationResponse<T>> respPromise = new DefaultPromise<>(
+					connReadyPromise.channel().eventLoop());
 			
-			connectionReadyPromise.channel().eventLoop().submit(new Runnable() {
+			connReadyPromise.channel().eventLoop().submit(new Runnable() {
 				
 				@Override
 				public void run() {
 					if (PushHttpClient.this.responsePromises
 							.containsKey(notification)) {
-						responsePromise
+						respPromise
 								.setFailure(new IllegalStateException(
 										"The given notification has already been sent and not yet resolved."));
 					} else {
 						PushHttpClient.this.responsePromises.put(notification,
-								responsePromise);
+								respPromise);
 					}
 				}
 			});
 			
-			connectionReadyPromise.channel().write(notification)
+			connReadyPromise.channel().write(notification)
 					.addListener(new GenericFutureListener<ChannelFuture>() {
 						
 						@Override
@@ -590,21 +590,21 @@ class PushHttpClient<T extends HttpPushNotification> {
 								
 								PushHttpClient.this.responsePromises
 										.remove(notification);
-								responsePromise.tryFailure(future.cause());
+								respPromise.tryFailure(future.cause());
 							}
 						}
 					});
 			
-			responseFuture = responsePromise;
+			respFuture = respPromise;
 		} else {
 			log.debug(
 					"Failed to send push notification because client is not connected: {}",
 					notification);
-			responseFuture = new FailedFuture<>(GlobalEventExecutor.INSTANCE,
+			respFuture = new FailedFuture<>(GlobalEventExecutor.INSTANCE,
 					NOT_CONNECTED_EXCEPTION);
 		}
 		
-		responseFuture
+		respFuture
 				.addListener(new GenericFutureListener<Future<PushNotificationResponse<T>>>() {
 					
 					@Override
@@ -618,7 +618,7 @@ class PushHttpClient<T extends HttpPushNotification> {
 					}
 				});
 		
-		return responseFuture;
+		return respFuture;
 	}
 	
 	private void verifyTopic(T notification) {

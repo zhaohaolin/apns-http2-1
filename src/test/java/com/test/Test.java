@@ -3,7 +3,7 @@
  * Test.java Creator: joe.zhao(zhaohaolin@hikvision.com.cn) Create-Date:
  * 下午6:36:41
  */
-package br.com.zup.push;
+package com.test;
 
 import io.netty.util.concurrent.Future;
 
@@ -35,8 +35,10 @@ public class Test {
 		
 		Notification n = new Notification.Builder(
 				"1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7")
-				.alertBody(
-						"U0001f42f我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
+				// .alertTitle("我是测试的标题")
+				// .alertBody(
+				// "d83dde04 我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
+				.alert("我是测试内容")
 				.badge(22)
 				.sound("default.caf")
 				.customField(
