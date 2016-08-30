@@ -2,14 +2,14 @@ package br.com.zup.push.data;
 
 import java.util.Date;
 
-public class ZupPushNotificationResponse<T extends HttpPushNotification>
-		implements PushNotificationResponse<T> {
+public class DefaultPushResponse<T extends PushNotification>
+		implements PushResponse<T> {
 	private final T			pushNotification;
 	private final boolean	success;
 	private final String	rejectionReason;
 	private final Date		tokenExpirationTimestamp;
 	
-	public ZupPushNotificationResponse(final T pushNotification,
+	public DefaultPushResponse(final T pushNotification,
 			final boolean success, final String rejectionReason,
 			final Date tokenExpirationTimestamp) {
 		this.pushNotification = pushNotification;

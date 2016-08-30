@@ -4,7 +4,7 @@ import br.com.zup.push.client.DeliveryPriority;
 
 import java.util.Date;
 
-public class ZupHttpPushNotification implements HttpPushNotification {
+public class DefaultPushNotification implements PushNotification {
 	
 	private final String			token;
 	private final String			payload;
@@ -12,21 +12,20 @@ public class ZupHttpPushNotification implements HttpPushNotification {
 	private String					topic;
 	private final DeliveryPriority	priority;
 	
-	public ZupHttpPushNotification(final String token, String topic,
+	public DefaultPushNotification(final String token, String topic,
 			final String payload) {
 		this(token, topic, payload, null, DeliveryPriority.IMMEDIATE);
 	}
 	
-	public ZupHttpPushNotification(final String token, final String topic,
+	public DefaultPushNotification(final String token, final String topic,
 			final String payload, final Date invalidationTime) {
 		this(token, topic, payload, invalidationTime,
 				DeliveryPriority.IMMEDIATE);
 	}
 	
-	public ZupHttpPushNotification(final String token, final String topic,
+	public DefaultPushNotification(final String token, final String topic,
 			final String payload, final Date invalidationTime,
 			final DeliveryPriority priority) {
-		
 		this.token = token;
 		this.payload = payload;
 		this.invalidationTime = invalidationTime;
@@ -91,10 +90,10 @@ public class ZupHttpPushNotification implements HttpPushNotification {
 		if (obj == null) {
 			return false;
 		}
-		if (!(obj instanceof ZupHttpPushNotification)) {
+		if (!(obj instanceof DefaultPushNotification)) {
 			return false;
 		}
-		final ZupHttpPushNotification other = (ZupHttpPushNotification) obj;
+		final DefaultPushNotification other = (DefaultPushNotification) obj;
 		if (this.invalidationTime == null) {
 			if (other.invalidationTime != null) {
 				return false;

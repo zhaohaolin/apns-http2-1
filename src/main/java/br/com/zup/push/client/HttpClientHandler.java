@@ -1,17 +1,20 @@
 package br.com.zup.push.client;
 
-import br.com.zup.push.data.HttpPushNotification;
-import br.com.zup.push.data.ZupPushNotificationResponse;
-import br.com.zup.push.util.DateAsMillisecondsSinceEpochTypeAdapter;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import io.netty.handler.codec.http2.*;
+import io.netty.handler.codec.http2.AbstractHttp2ConnectionHandlerBuilder;
+import io.netty.handler.codec.http2.DefaultHttp2Headers;
+import io.netty.handler.codec.http2.Http2ConnectionDecoder;
+import io.netty.handler.codec.http2.Http2ConnectionEncoder;
+import io.netty.handler.codec.http2.Http2ConnectionHandler;
+import io.netty.handler.codec.http2.Http2Exception;
+import io.netty.handler.codec.http2.Http2FrameAdapter;
+import io.netty.handler.codec.http2.Http2Headers;
+import io.netty.handler.codec.http2.Http2Settings;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.WriteTimeoutException;
@@ -19,16 +22,27 @@ import io.netty.util.AsciiString;
 import io.netty.util.concurrent.GenericFutureListener;
 import io.netty.util.concurrent.PromiseCombiner;
 import io.netty.util.concurrent.ScheduledFuture;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.concurrent.ExecutionException;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-class HttpClientHandler<T extends HttpPushNotification> extends
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import br.com.zup.push.data.DefaultPushResponse;
+import br.com.zup.push.data.PushNotification;
+import br.com.zup.push.util.DateAsMillisecondsSinceEpochTypeAdapter;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+class HttpClientHandler<T extends PushNotification> extends
 		Http2ConnectionHandler {
 	
 	private final AtomicBoolean					receivedInitialSettings			= new AtomicBoolean(
@@ -38,7 +52,7 @@ class HttpClientHandler<T extends HttpPushNotification> extends
 	private final Map<Integer, T>				pushNotificationsByStreamId		= new HashMap<>();
 	private final Map<Integer, Http2Headers>	headersByStreamId				= new HashMap<>();
 	
-	private final PushHttpClient<T>				pushHttpClient;
+	private final APNsHttp2Client<T>			pushHttpClient;
 	private final String						authority;
 	
 	private long								nextPingId						= new Random()
@@ -70,21 +84,21 @@ class HttpClientHandler<T extends HttpPushNotification> extends
 	private static final Logger					log								= LoggerFactory
 																						.getLogger(HttpClientHandler.class);
 	
-	public static class ApnsClientHandlerBuilder<S extends HttpPushNotification>
+	public static class ApnsClientHandlerBuilder<S extends PushNotification>
 			extends
 			AbstractHttp2ConnectionHandlerBuilder<HttpClientHandler<S>, ApnsClientHandlerBuilder<S>> {
 		
-		private PushHttpClient<S>	pushHttpClient;
+		private APNsHttp2Client<S>	pushHttpClient;
 		private String				authority;
 		private int					maxUnflushedNotifications	= 0;
 		
 		public ApnsClientHandlerBuilder<S> apnsClient(
-				final PushHttpClient<S> pushHttpClient) {
+				final APNsHttp2Client<S> pushHttpClient) {
 			this.pushHttpClient = pushHttpClient;
 			return this;
 		}
 		
-		public PushHttpClient<S> apnsClient() {
+		public APNsHttp2Client<S> apnsClient() {
 			return this.pushHttpClient;
 		}
 		
@@ -173,7 +187,7 @@ class HttpClientHandler<T extends HttpPushNotification> extends
 						ErrorResponse.class);
 				
 				HttpClientHandler.this.pushHttpClient
-						.handlePushNotificationResponse(new ZupPushNotificationResponse<>(
+						.handlePushNotificationResponse(new DefaultPushResponse<>(
 								pushNotification, success, errorResponse
 										.getReason(), errorResponse
 										.getTimestamp()));
@@ -213,7 +227,7 @@ class HttpClientHandler<T extends HttpPushNotification> extends
 						.remove(streamId);
 				
 				HttpClientHandler.this.pushHttpClient
-						.handlePushNotificationResponse(new ZupPushNotificationResponse<>(
+						.handlePushNotificationResponse(new DefaultPushResponse<>(
 								pushNotification, success, null, null));
 			} else {
 				HttpClientHandler.this.headersByStreamId.put(streamId, headers);
@@ -249,7 +263,7 @@ class HttpClientHandler<T extends HttpPushNotification> extends
 	protected HttpClientHandler(final Http2ConnectionDecoder decoder,
 			final Http2ConnectionEncoder encoder,
 			final Http2Settings initialSettings,
-			final PushHttpClient<T> pushHttpClient, final String authority,
+			final APNsHttp2Client<T> pushHttpClient, final String authority,
 			final int maxUnflushedNotifications) {
 		super(decoder, encoder, initialSettings);
 		

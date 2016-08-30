@@ -2,7 +2,7 @@ package br.com.zup.push.data;
 
 import java.util.Date;
 
-public interface PushNotificationResponse<T extends HttpPushNotification> {
+public interface PushResponse<T extends PushNotification> {
 	
 	T getPushNotification();
 	

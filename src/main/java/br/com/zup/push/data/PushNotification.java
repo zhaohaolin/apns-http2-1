@@ -4,7 +4,7 @@ import br.com.zup.push.client.DeliveryPriority;
 
 import java.util.Date;
 
-public interface HttpPushNotification {
+public interface PushNotification {
 	
 	String getToken();
 	
@@ -17,4 +17,5 @@ public interface HttpPushNotification {
 	String getTopic();
 	
 	void setTopic(String topic);
+	
 }
