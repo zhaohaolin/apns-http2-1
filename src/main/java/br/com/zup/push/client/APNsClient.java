@@ -79,7 +79,7 @@ public class APNsClient {
 				throw e;
 			}
 			if (e.getCause() instanceof ClientNotConnectedException) {
-				throw new CertificateNotValidException(e.getMessage());
+				throw new ClientNotConnectedException(e.getMessage());
 			}
 			throw e;
 		} catch (InterruptedException e) {
