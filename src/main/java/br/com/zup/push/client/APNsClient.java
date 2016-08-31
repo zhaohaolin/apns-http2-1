@@ -21,16 +21,16 @@ import br.com.zup.push.util.P12Util;
 
 public class APNsClient {
 	
-	private static final Logger					log	= LoggerFactory
+	private static final Logger					LOG	= LoggerFactory
 															.getLogger(APNsClient.class);
 	
-	private APNsHttp2Client<PushNotification>	httpClient;
+	private Http2Client<PushNotification>	http2Client;
 	private boolean								sandboxEnvironment;
 	
 	public APNsClient(final File certificateFile, final String password)
 			throws SSLException {
 		try {
-			this.httpClient = new APNsHttp2Client<PushNotification>(
+			this.http2Client = new Http2Client<PushNotification>(
 					certificateFile, password);
 		} catch (IOException | KeyStoreException e) {
 			throw new SSLException(e);
@@ -43,7 +43,7 @@ public class APNsClient {
 		try {
 			KeyStore keyStore = P12Util.loadPCKS12KeyStore(p12InputStream,
 					password);
-			this.httpClient = new APNsHttp2Client<PushNotification>(keyStore,
+			this.http2Client = new Http2Client<PushNotification>(keyStore,
 					password);
 		} catch (SSLException e) {
 			throw e;
@@ -61,25 +61,25 @@ public class APNsClient {
 			final String token) throws ExecutionException,
 			CertificateNotValidException {
 		try {
-			if (!this.httpClient.isConnected()) {
+			if (!this.http2Client.isConnected()) {
 				stablishConnection();
 			}
 			final PushNotification notification = new DefaultPushNotification(
 					token, null, message);
-			final Future<PushResponse<PushNotification>> future = this.httpClient
+			final Future<PushResponse<PushNotification>> future = this.http2Client
 					.sendNotification(notification);
 			final PushResponse<PushNotification> resp = future.get();
 			
 			return resp;
 		} catch (final ExecutionException e) {
-			log.error("Failed to send push notification.", e);
+			LOG.error("Failed to send push notification.", e);
 			// e.printStackTrace();
 			
 			if (e.getCause() instanceof CertificateNotValidException) {
 				throw e;
 			}
 			if (e.getCause() instanceof ClientNotConnectedException) {
-				throw new CertificateNotValidException(e.getMessage());
+				throw new ClientNotConnectedException(e.getMessage());
 			}
 			throw e;
 		} catch (InterruptedException e) {
@@ -99,7 +99,7 @@ public class APNsClient {
 	public Future<PushResponse<PushNotification>> pushMessageAsync(
 			final String message, final String token)
 			throws ExecutionException, InterruptedException {
-		if (!this.httpClient.isConnected()) {
+		if (!this.http2Client.isConnected()) {
 			try {
 				stablishConnection();
 			} catch (InterruptedException e) {
@@ -110,7 +110,7 @@ public class APNsClient {
 		
 		final DefaultPushNotification notify = new DefaultPushNotification(
 				token, null, message);
-		final Future<PushResponse<PushNotification>> future = this.httpClient
+		final Future<PushResponse<PushNotification>> future = this.http2Client
 				.sendNotification(notify);
 		
 		return future;
@@ -152,14 +152,14 @@ public class APNsClient {
 	// }
 	
 	private void stablishConnection() throws InterruptedException {
-		final Future<Void> connectFuture = sandboxEnvironment ? this.httpClient
-				.connectSandBox() : this.httpClient.connectProduction();
+		final Future<Void> connectFuture = sandboxEnvironment ? this.http2Client
+				.connectSandBox() : this.http2Client.connectProduction();
 		connectFuture.await();
 	}
 	
 	public void disconnect() {
-		if (httpClient.isConnected()) {
-			httpClient.disconnect();
+		if (http2Client.isConnected()) {
+			http2Client.disconnect();
 		}
 	}
 }

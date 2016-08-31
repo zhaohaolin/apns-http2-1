@@ -63,18 +63,17 @@ import javax.net.ssl.SSLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import br.com.zup.push.client.HttpClientHandler.ApnsClientHandlerBuilder;
 import br.com.zup.push.data.PushNotification;
 import br.com.zup.push.data.PushResponse;
 import br.com.zup.push.proxy.ProxyHandlerFactory;
 import br.com.zup.push.util.P12Util;
 
-class APNsHttp2Client<T extends PushNotification> {
+class Http2Client<T extends PushNotification> {
 	
 	private static final String							EPOLL_EVENT_LOOP_GROUP_CLASS	= "io.netty.channel.epoll.EpollEventLoopGroup";
 	private static final String							EPOLL_SOCKET_CHANNEL_CLASS		= "io.netty.channel.epoll.EpollSocketChannel";
 	
-	private final Bootstrap								boot;
+	private final Bootstrap								bootstrap;
 	private final boolean								shouldShutDownEventLoopGroup;
 	private volatile ProxyHandlerFactory				proxyHandlerFactory;
 	
@@ -91,8 +90,8 @@ class APNsHttp2Client<T extends PushNotification> {
 	
 	private static final ClientNotConnectedException	NOT_CONNECTED_EXCEPTION			= new ClientNotConnectedException();
 	
-	private static final Logger							log								= LoggerFactory
-																								.getLogger(APNsHttp2Client.class);
+	private static final Logger							LOG								= LoggerFactory
+																								.getLogger(Http2Client.class);
 	
 	private class CloseFutureListener implements
 			GenericFutureListener<ChannelFuture> {
@@ -108,32 +107,32 @@ class APNsHttp2Client<T extends PushNotification> {
 		@Override
 		public void operationComplete(final ChannelFuture future)
 				throws Exception {
-			synchronized (APNsHttp2Client.this.boot) {
-				if (APNsHttp2Client.this.connectionReadyPromise != null) {
-					APNsHttp2Client.this.connectionReadyPromise
+			synchronized (Http2Client.this.bootstrap) {
+				if (Http2Client.this.connectionReadyPromise != null) {
+					Http2Client.this.connectionReadyPromise
 							.tryFailure(new IllegalStateException(
 									"Channel closed before HTTP/2 preface completed."));
-					APNsHttp2Client.this.connectionReadyPromise = null;
+					Http2Client.this.connectionReadyPromise = null;
 				}
 				
-				if (APNsHttp2Client.this.reconnectionPromise != null) {
-					log.debug(
+				if (Http2Client.this.reconnectionPromise != null) {
+					LOG.debug(
 							"Disconnected. Next automatic reconnection attempt in {} seconds.",
-							APNsHttp2Client.this.reconnectDelaySeconds);
+							Http2Client.this.reconnectDelaySeconds);
 					future.channel()
 							.eventLoop()
 							.schedule(new Runnable() {
 								
 								@Override
 								public void run() {
-									log.debug("Attempting to reconnect.");
-									APNsHttp2Client.this.connect(host, port);
+									LOG.debug("Attempting to reconnect.");
+									Http2Client.this.connect(host, port);
 								}
-							}, APNsHttp2Client.this.reconnectDelaySeconds,
+							}, Http2Client.this.reconnectDelaySeconds,
 									TimeUnit.SECONDS);
 					
-					APNsHttp2Client.this.reconnectDelaySeconds = Math.min(
-							APNsHttp2Client.this.reconnectDelaySeconds,
+					Http2Client.this.reconnectDelaySeconds = Math.min(
+							Http2Client.this.reconnectDelaySeconds,
 							HttpProperties.MAX_RECONNECT_DELAY_SECONDS);
 				}
 			}
@@ -142,14 +141,14 @@ class APNsHttp2Client<T extends PushNotification> {
 				
 				@Override
 				public void run() {
-					for (final Promise<PushResponse<T>> responsePromise : APNsHttp2Client.this.responsePromises
+					for (final Promise<PushResponse<T>> responsePromise : Http2Client.this.responsePromises
 							.values()) {
 						responsePromise
 								.tryFailure(new ClientNotConnectedException(
 										"Client disconnected unexpectedly."));
 					}
 					
-					APNsHttp2Client.this.responsePromises.clear();
+					Http2Client.this.responsePromises.clear();
 				}
 			});
 		}
@@ -162,23 +161,24 @@ class APNsHttp2Client<T extends PushNotification> {
 		public void operationComplete(final ChannelFuture future)
 				throws Exception {
 			if (future.isSuccess()) {
-				synchronized (APNsHttp2Client.this.boot) {
-					if (APNsHttp2Client.this.reconnectionPromise != null) {
-						log.info("Connection to {} restored.", future.channel()
+				synchronized (Http2Client.this.bootstrap) {
+					if (Http2Client.this.reconnectionPromise != null) {
+						LOG.info("Connection to {} restored.", future.channel()
 								.remoteAddress());
-						APNsHttp2Client.this.reconnectionPromise.trySuccess();
+						Http2Client.this.reconnectionPromise.trySuccess();
 					} else {
-						log.info("Connected to {}.", future.channel()
+						LOG.info("Connected to {}.", future.channel()
 								.remoteAddress());
 					}
 					
-					APNsHttp2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
-					APNsHttp2Client.this.reconnectionPromise = future.channel()
+					Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+					Http2Client.this.reconnectionPromise = future.channel()
 							.newPromise();
 				}
 				
 			} else {
-				log.info("Failed to connect.", future.cause());
+				// TODO 连接失败,是否继续发起重连接操作
+				LOG.info("Failed to connect.", future.cause());
 			}
 		}
 		
@@ -189,22 +189,22 @@ class APNsHttp2Client<T extends PushNotification> {
 		
 		/**
 		 * TODO
+		 * 
 		 * @param fallbackProtocol
 		 */
 		protected ApplicationProtocolNegotiationHandlerImpl(
 				String fallbackProtocol) {
 			super(fallbackProtocol);
-			// TODO Auto-generated constructor stub
 		}
 		
 		@Override
 		protected void configurePipeline(final ChannelHandlerContext ctx,
 				final String protocol) {
 			if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
-				final ApnsClientHandlerBuilder<T> builder = new ApnsClientHandlerBuilder<T>();
-				final HttpClientHandler<T> handler = builder
+				final Http2ClientHandlerBuilder<T> builder = new Http2ClientHandlerBuilder<T>();
+				final Http2ClientHandler<T> handler = builder
 						.server(false)
-						.apnsClient(APNsHttp2Client.this)
+						.http2Client(Http2Client.this)
 						.authority(
 								((InetSocketAddress) ctx.channel()
 										.remoteAddress()).getHostName())
@@ -212,9 +212,9 @@ class APNsHttp2Client<T extends PushNotification> {
 								HttpProperties.DEFAULT_MAX_UNFLUSHED_NOTIFICATIONS)
 						.encoderEnforceMaxConcurrentStreams(true).build();
 				
-				synchronized (APNsHttp2Client.this.boot) {
-					if (APNsHttp2Client.this.gracefulShutdownTimeoutMillis != null) {
-						handler.gracefulShutdownTimeoutMillis(APNsHttp2Client.this.gracefulShutdownTimeoutMillis);
+				synchronized (Http2Client.this.bootstrap) {
+					if (Http2Client.this.gracefulShutdownTimeoutMillis != null) {
+						handler.gracefulShutdownTimeoutMillis(Http2Client.this.gracefulShutdownTimeoutMillis);
 					}
 				}
 				
@@ -229,7 +229,7 @@ class APNsHttp2Client<T extends PushNotification> {
 					
 					@Override
 					public void run() {
-						final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
+						final ChannelPromise connectionReadyPromise = Http2Client.this.connectionReadyPromise;
 						
 						if (connectionReadyPromise != null) {
 							connectionReadyPromise.trySuccess();
@@ -238,7 +238,7 @@ class APNsHttp2Client<T extends PushNotification> {
 				});
 				
 			} else {
-				log.error("Unexpected protocol: {}", protocol);
+				LOG.error("Unexpected protocol: {}", protocol);
 				ctx.close();
 			}
 		}
@@ -246,7 +246,7 @@ class APNsHttp2Client<T extends PushNotification> {
 		@Override
 		protected void handshakeFailure(final ChannelHandlerContext context,
 				final Throwable cause) throws Exception {
-			final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
+			final ChannelPromise connectionReadyPromise = Http2Client.this.connectionReadyPromise;
 			
 			if (connectionReadyPromise != null) {
 				connectionReadyPromise.tryFailure(cause);
@@ -257,30 +257,29 @@ class APNsHttp2Client<T extends PushNotification> {
 		
 	}
 	
-	public APNsHttp2Client(final File p12File, final String password)
+	public Http2Client(final File p12File, final String password)
 			throws IOException, KeyStoreException {
 		this(p12File, password, null);
 	}
 	
-	public APNsHttp2Client(final File p12File, final String password,
+	public Http2Client(final File p12File, final String password,
 			final EventLoopGroup eventLoopGroup) throws IOException,
 			KeyStoreException {
-		this(APNsHttp2Client.getSslContextWithP12File(p12File, password),
+		this(Http2Client.getSslContextWithP12File(p12File, password),
 				eventLoopGroup);
 		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
 			loadIdentifiers(loadKeyStore(p12InputStream, password));
 		}
 	}
 	
-	public APNsHttp2Client(KeyStore keyStore, final String password)
+	public Http2Client(KeyStore keyStore, final String password)
 			throws SSLException {
 		this(keyStore, password, null);
 	}
 	
-	public APNsHttp2Client(final KeyStore keyStore, final String password,
+	public Http2Client(final KeyStore keyStore, final String password,
 			final EventLoopGroup eventLoopGroup) throws SSLException {
-		this(APNsHttp2Client
-				.getSslContextWithP12InputStream(keyStore, password),
+		this(Http2Client.getSslContextWithP12InputStream(keyStore, password),
 				eventLoopGroup);
 		loadIdentifiers(keyStore);
 	}
@@ -310,23 +309,23 @@ class APNsHttp2Client<T extends PushNotification> {
 		}
 	}
 	
-	public APNsHttp2Client(final X509Certificate certificate,
+	public Http2Client(final X509Certificate certificate,
 			final PrivateKey privateKey, final String privateKeyPassword)
 			throws SSLException {
 		this(certificate, privateKey, privateKeyPassword, null);
 	}
 	
-	public APNsHttp2Client(final X509Certificate certificate,
+	public Http2Client(final X509Certificate certificate,
 			final PrivateKey privateKey, final String privateKeyPassword,
 			final EventLoopGroup eventLoopGroup) throws SSLException {
-		this(APNsHttp2Client.getSslContextWithCertificateAndPrivateKey(
-				certificate, privateKey, privateKeyPassword), eventLoopGroup);
+		this(Http2Client.getSslContextWithCertificateAndPrivateKey(certificate,
+				privateKey, privateKeyPassword), eventLoopGroup);
 	}
 	
 	private static SslContext getSslContextWithP12File(final File p12File,
 			final String password) throws IOException, KeyStoreException {
 		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
-			return APNsHttp2Client.getSslContextWithP12InputStream(
+			return Http2Client.getSslContextWithP12InputStream(
 					loadKeyStore(p12InputStream, password), password);
 		}
 	}
@@ -354,14 +353,14 @@ class APNsHttp2Client<T extends PushNotification> {
 			throw new SSLException(e);
 		}
 		
-		return APNsHttp2Client.getSslContextWithCertificateAndPrivateKey(
+		return Http2Client.getSslContextWithCertificateAndPrivateKey(
 				x509Certificate, privateKey, password);
 	}
 	
 	private static SslContext getSslContextWithCertificateAndPrivateKey(
 			final X509Certificate certificate, final PrivateKey privateKey,
 			final String privateKeyPassword) throws SSLException {
-		return APNsHttp2Client.getBaseSslContextBuilder()
+		return Http2Client.getBaseSslContextBuilder()
 				.keyManager(privateKey, privateKeyPassword, certificate)
 				.build();
 	}
@@ -391,29 +390,28 @@ class APNsHttp2Client<T extends PushNotification> {
 		return builder;
 	}
 	
-	protected APNsHttp2Client(final SslContext sslCtx,
-			final EventLoopGroup group) {
-		this.boot = new Bootstrap();
+	protected Http2Client(final SslContext sslCtx, final EventLoopGroup group) {
+		this.bootstrap = new Bootstrap();
 		
 		if (group != null) {
-			this.boot.group(group);
+			this.bootstrap.group(group);
 			this.shouldShutDownEventLoopGroup = false;
 		} else {
-			this.boot.group(new NioEventLoopGroup(1));
+			this.bootstrap.group(new NioEventLoopGroup(1));
 			this.shouldShutDownEventLoopGroup = true;
 		}
 		
-		this.boot.channel(this
-				.getSocketChannelClass(this.boot.config().group()));
-		this.boot.option(ChannelOption.TCP_NODELAY, true);
-		this.boot.handler(new ChannelInitializer<SocketChannel>() {
+		this.bootstrap.channel(this.getSocketChannelClass(this.bootstrap
+				.config().group()));
+		this.bootstrap.option(ChannelOption.TCP_NODELAY, true);
+		this.bootstrap.handler(new ChannelInitializer<SocketChannel>() {
 			
 			@Override
 			protected void initChannel(final SocketChannel channel)
 					throws Exception {
 				final ChannelPipeline pipeline = channel.pipeline();
 				
-				final ProxyHandlerFactory factory = APNsHttp2Client.this.proxyHandlerFactory;
+				final ProxyHandlerFactory factory = Http2Client.this.proxyHandlerFactory;
 				if (factory != null) {
 					pipeline.addFirst(factory.createProxyHandler());
 				}
@@ -433,7 +431,7 @@ class APNsHttp2Client<T extends PushNotification> {
 	private Class<? extends Channel> getSocketChannelClass(
 			final EventLoopGroup eventLoopGroup) {
 		if (eventLoopGroup == null) {
-			log.warn("Asked for socket channel class to work with null event loop group, returning NioSocketChannel class.");
+			LOG.warn("Asked for socket channel class to work with null event loop group, returning NioSocketChannel class.");
 			return NioSocketChannel.class;
 		}
 		
@@ -456,7 +454,7 @@ class APNsHttp2Client<T extends PushNotification> {
 			final String className) {
 		try {
 			final Class<?> clazz = Class.forName(className);
-			log.debug("Loaded socket channel class: {}", clazz);
+			LOG.debug("Loaded socket channel class: {}", clazz);
 			return clazz.asSubclass(Channel.class);
 		} catch (final ClassNotFoundException e) {
 			throw new IllegalArgumentException(e.getMessage(), e);
@@ -467,12 +465,12 @@ class APNsHttp2Client<T extends PushNotification> {
 		this.proxyHandlerFactory = factory;
 		AddressResolverGroup<?> group = (factory == null ? DefaultAddressResolverGroup.INSTANCE
 				: NoopAddressResolverGroup.INSTANCE);
-		this.boot.resolver(group);
+		this.bootstrap.resolver(group);
 	}
 	
 	public void setConnectionTimeout(final int timeoutMillis) {
-		synchronized (this.boot) {
-			this.boot.option(ChannelOption.CONNECT_TIMEOUT_MILLIS,
+		synchronized (this.bootstrap) {
+			this.bootstrap.option(ChannelOption.CONNECT_TIMEOUT_MILLIS,
 					timeoutMillis);
 		}
 	}
@@ -494,27 +492,26 @@ class APNsHttp2Client<T extends PushNotification> {
 	public Future<Void> connect(final String host, final int port) {
 		final Future<Void> connectionReadyFuture;
 		
-		if (this.boot.config().group().isShuttingDown()
-				|| this.boot.config().group().isShutdown()) {
+		if (this.bootstrap.config().group().isShuttingDown()
+				|| this.bootstrap.config().group().isShutdown()) {
 			connectionReadyFuture = new FailedFuture<Void>(
 					GlobalEventExecutor.INSTANCE,
 					new IllegalStateException(
 							"Client's event loop group has been shut down and cannot be restarted."));
 		} else {
-			synchronized (this.boot) {
-				if (this.connectionReadyPromise == null) {
-					
-					final ChannelFuture connectFuture = this.boot.connect(host,
-							port);
-					this.connectionReadyPromise = connectFuture.channel()
-							.newPromise();
-					
-					connectFuture.channel().closeFuture()
-							.addListener(new CloseFutureListener(host, port));
-					
-					this.connectionReadyPromise
-							.addListener(new ConnectFutureListener());
-				}
+			synchronized (this.bootstrap) {
+				//
+				this.connectionReadyPromise = null;
+				final ChannelFuture connectFuture = this.bootstrap.connect(
+						host, port);
+				this.connectionReadyPromise = connectFuture.channel()
+						.newPromise();
+				
+				connectFuture.channel().closeFuture()
+						.addListener(new CloseFutureListener(host, port));
+				
+				this.connectionReadyPromise
+						.addListener(new ConnectFutureListener());
 				
 				connectionReadyFuture = this.connectionReadyPromise;
 			}
@@ -531,20 +528,20 @@ class APNsHttp2Client<T extends PushNotification> {
 	
 	void waitForInitialSettings() throws InterruptedException {
 		this.connectionReadyPromise.channel().pipeline()
-				.get(HttpClientHandler.class).waitForInitialSettings();
+				.get(Http2ClientHandler.class).waitForInitialSettings();
 	}
 	
 	public Future<Void> getReconnectionFuture() {
 		final Future<Void> reconnectionFuture;
 		
-		synchronized (this.boot) {
+		synchronized (this.bootstrap) {
 			if (this.isConnected()) {
 				reconnectionFuture = this.connectionReadyPromise.channel()
 						.newSucceededFuture();
 			} else if (this.reconnectionPromise != null) {
 				reconnectionFuture = this.reconnectionPromise;
 			} else {
-				reconnectionFuture = new FailedFuture<>(
+				reconnectionFuture = new FailedFuture<Void>(
 						GlobalEventExecutor.INSTANCE,
 						new IllegalStateException(
 								"Client was not previously connected."));
@@ -571,12 +568,12 @@ class APNsHttp2Client<T extends PushNotification> {
 				
 				@Override
 				public void run() {
-					if (APNsHttp2Client.this.responsePromises
+					if (Http2Client.this.responsePromises
 							.containsKey(notification)) {
 						promise.setFailure(new IllegalStateException(
 								"The given notification has already been sent and not yet resolved."));
 					} else {
-						APNsHttp2Client.this.responsePromises.put(notification,
+						Http2Client.this.responsePromises.put(notification,
 								promise);
 					}
 				}
@@ -589,11 +586,11 @@ class APNsHttp2Client<T extends PushNotification> {
 						public void operationComplete(final ChannelFuture future)
 								throws Exception {
 							if (!future.isSuccess()) {
-								log.debug(
+								LOG.debug(
 										"Failed to write push notification: {}",
 										notification, future.cause());
 								
-								APNsHttp2Client.this.responsePromises
+								Http2Client.this.responsePromises
 										.remove(notification);
 								promise.tryFailure(future.cause());
 							}
@@ -604,7 +601,7 @@ class APNsHttp2Client<T extends PushNotification> {
 		} else {
 			
 			// TODO send failed to processed
-			log.error(
+			LOG.error(
 					"Failed to send push notification because client is not connected: {}",
 					notification);
 			respFuture = new FailedFuture<PushResponse<T>>(
@@ -635,7 +632,7 @@ class APNsHttp2Client<T extends PushNotification> {
 	}
 	
 	protected void handlePushNotificationResponse(final PushResponse<T> response) {
-		log.debug("Received response from APNs gateway: {}", response);
+		LOG.debug("Received response from APNs gateway: {}", response);
 		if (response.getPushNotification() != null) {
 			this.responsePromises.remove(response.getPushNotification())
 					.setSuccess(response);
@@ -645,12 +642,12 @@ class APNsHttp2Client<T extends PushNotification> {
 	}
 	
 	public void setGracefulShutdownTimeout(final long timeoutMillis) {
-		synchronized (this.boot) {
+		synchronized (this.bootstrap) {
 			this.gracefulShutdownTimeoutMillis = timeoutMillis;
 			
 			if (this.connectionReadyPromise != null) {
-				final HttpClientHandler<?> handler = this.connectionReadyPromise
-						.channel().pipeline().get(HttpClientHandler.class);
+				final Http2ClientHandler<?> handler = this.connectionReadyPromise
+						.channel().pipeline().get(Http2ClientHandler.class);
 				
 				if (handler != null) {
 					handler.gracefulShutdownTimeoutMillis(timeoutMillis);
@@ -659,11 +656,12 @@ class APNsHttp2Client<T extends PushNotification> {
 		}
 	}
 	
+	// disconnect
 	public Future<Void> disconnect() {
-		log.info("Disconnecting.");
+		LOG.info("Disconnecting.");
 		final Future<Void> disconnectFuture;
 		
-		synchronized (this.boot) {
+		synchronized (this.bootstrap) {
 			this.reconnectionPromise = null;
 			
 			final Future<Void> channelCloseFuture;
@@ -683,15 +681,15 @@ class APNsHttp2Client<T extends PushNotification> {
 							@Override
 							public void operationComplete(
 									final Future<Void> future) throws Exception {
-								APNsHttp2Client.this.boot.config().group()
+								Http2Client.this.bootstrap.config().group()
 										.shutdownGracefully();
 							}
 						});
 				
-				disconnectFuture = new DefaultPromise<>(
+				disconnectFuture = new DefaultPromise<Void>(
 						GlobalEventExecutor.INSTANCE);
 				
-				this.boot.config().group().terminationFuture()
+				this.bootstrap.config().group().terminationFuture()
 						.addListener(new GenericFutureListener() {
 							
 							@Override
