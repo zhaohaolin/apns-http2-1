@@ -94,6 +94,96 @@ class APNsHttp2Client<T extends PushNotification> {
 	private static final Logger							log								= LoggerFactory
 																								.getLogger(APNsHttp2Client.class);
 	
+	private class CloseFutureListener implements
+			GenericFutureListener<ChannelFuture> {
+		
+		private final String	host;
+		private final int		port;
+		
+		public CloseFutureListener(String host, int port) {
+			this.host = host;
+			this.port = port;
+		}
+		
+		@Override
+		public void operationComplete(final ChannelFuture future)
+				throws Exception {
+			synchronized (APNsHttp2Client.this.boot) {
+				if (APNsHttp2Client.this.connectionReadyPromise != null) {
+					APNsHttp2Client.this.connectionReadyPromise
+							.tryFailure(new IllegalStateException(
+									"Channel closed before HTTP/2 preface completed."));
+					APNsHttp2Client.this.connectionReadyPromise = null;
+				}
+				
+				if (APNsHttp2Client.this.reconnectionPromise != null) {
+					log.debug(
+							"Disconnected. Next automatic reconnection attempt in {} seconds.",
+							APNsHttp2Client.this.reconnectDelaySeconds);
+					future.channel()
+							.eventLoop()
+							.schedule(new Runnable() {
+								
+								@Override
+								public void run() {
+									log.debug("Attempting to reconnect.");
+									APNsHttp2Client.this.connect(host, port);
+								}
+							}, APNsHttp2Client.this.reconnectDelaySeconds,
+									TimeUnit.SECONDS);
+					
+					APNsHttp2Client.this.reconnectDelaySeconds = Math.min(
+							APNsHttp2Client.this.reconnectDelaySeconds,
+							HttpProperties.MAX_RECONNECT_DELAY_SECONDS);
+				}
+			}
+			
+			future.channel().eventLoop().submit(new Runnable() {
+				
+				@Override
+				public void run() {
+					for (final Promise<PushResponse<T>> responsePromise : APNsHttp2Client.this.responsePromises
+							.values()) {
+						responsePromise
+								.tryFailure(new ClientNotConnectedException(
+										"Client disconnected unexpectedly."));
+					}
+					
+					APNsHttp2Client.this.responsePromises.clear();
+				}
+			});
+		}
+	}
+	
+	private class ConnectFutureListener implements
+			GenericFutureListener<ChannelFuture> {
+		
+		@Override
+		public void operationComplete(final ChannelFuture future)
+				throws Exception {
+			if (future.isSuccess()) {
+				synchronized (APNsHttp2Client.this.boot) {
+					if (APNsHttp2Client.this.reconnectionPromise != null) {
+						log.info("Connection to {} restored.", future.channel()
+								.remoteAddress());
+						APNsHttp2Client.this.reconnectionPromise.trySuccess();
+					} else {
+						log.info("Connected to {}.", future.channel()
+								.remoteAddress());
+					}
+					
+					APNsHttp2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+					APNsHttp2Client.this.reconnectionPromise = future.channel()
+							.newPromise();
+				}
+				
+			} else {
+				log.info("Failed to connect.", future.cause());
+			}
+		}
+		
+	}
+	
 	public APNsHttp2Client(final File p12File, final String password)
 			throws IOException, KeyStoreException {
 		this(p12File, password, null);
@@ -396,7 +486,7 @@ class APNsHttp2Client<T extends PushNotification> {
 		
 		if (this.boot.config().group().isShuttingDown()
 				|| this.boot.config().group().isShutdown()) {
-			connectionReadyFuture = new FailedFuture<>(
+			connectionReadyFuture = new FailedFuture<Void>(
 					GlobalEventExecutor.INSTANCE,
 					new IllegalStateException(
 							"Client's event loop group has been shut down and cannot be restarted."));
@@ -409,105 +499,11 @@ class APNsHttp2Client<T extends PushNotification> {
 					this.connectionReadyPromise = connectFuture.channel()
 							.newPromise();
 					
-					connectFuture
-							.channel()
-							.closeFuture()
-							.addListener(
-									new GenericFutureListener<ChannelFuture>() {
-										
-										@Override
-										public void operationComplete(
-												final ChannelFuture future)
-												throws Exception {
-											synchronized (APNsHttp2Client.this.boot) {
-												if (APNsHttp2Client.this.connectionReadyPromise != null) {
-													APNsHttp2Client.this.connectionReadyPromise
-															.tryFailure(new IllegalStateException(
-																	"Channel closed before HTTP/2 preface completed."));
-													
-													APNsHttp2Client.this.connectionReadyPromise = null;
-												}
-												
-												if (APNsHttp2Client.this.reconnectionPromise != null) {
-													log.debug(
-															"Disconnected. Next automatic reconnection attempt in {} seconds.",
-															APNsHttp2Client.this.reconnectDelaySeconds);
-													future.channel()
-															.eventLoop()
-															.schedule(
-																	new Runnable() {
-																		
-																		@Override
-																		public void run() {
-																			log.debug("Attempting to reconnect.");
-																			APNsHttp2Client.this
-																					.connect(
-																							host,
-																							port);
-																		}
-																	},
-																	APNsHttp2Client.this.reconnectDelaySeconds,
-																	TimeUnit.SECONDS);
-													
-													APNsHttp2Client.this.reconnectDelaySeconds = Math
-															.min(APNsHttp2Client.this.reconnectDelaySeconds,
-																	HttpProperties.MAX_RECONNECT_DELAY_SECONDS);
-												}
-											}
-											
-											future.channel().eventLoop()
-													.submit(new Runnable() {
-														
-														@Override
-														public void run() {
-															for (final Promise<PushResponse<T>> responsePromise : APNsHttp2Client.this.responsePromises
-																	.values()) {
-																responsePromise
-																		.tryFailure(new ClientNotConnectedException(
-																				"Client disconnected unexpectedly."));
-															}
-															
-															APNsHttp2Client.this.responsePromises
-																	.clear();
-														}
-													});
-										}
-									});
+					connectFuture.channel().closeFuture()
+							.addListener(new CloseFutureListener(host, port));
 					
 					this.connectionReadyPromise
-							.addListener(new GenericFutureListener<ChannelFuture>() {
-								
-								@Override
-								public void operationComplete(
-										final ChannelFuture future)
-										throws Exception {
-									if (future.isSuccess()) {
-										synchronized (APNsHttp2Client.this.boot) {
-											if (APNsHttp2Client.this.reconnectionPromise != null) {
-												log.info(
-														"Connection to {} restored.",
-														future.channel()
-																.remoteAddress());
-												APNsHttp2Client.this.reconnectionPromise
-														.trySuccess();
-											} else {
-												log.info(
-														"Connected to {}.",
-														future.channel()
-																.remoteAddress());
-											}
-											
-											APNsHttp2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
-											APNsHttp2Client.this.reconnectionPromise = future
-													.channel().newPromise();
-										}
-										
-									} else {
-										log.info("Failed to connect.",
-												future.cause());
-									}
-								}
-							});
+							.addListener(new ConnectFutureListener());
 				}
 				
 				connectionReadyFuture = this.connectionReadyPromise;
@@ -548,11 +544,11 @@ class APNsHttp2Client<T extends PushNotification> {
 		return reconnectionFuture;
 	}
 	
-	public Future<PushResponse<T>> sendNotification(final T t) {
+	public Future<PushResponse<T>> sendNotification(final T notification) {
 		final Future<PushResponse<T>> respFuture;
 		final long notificationId = this.nextNotificationId.getAndIncrement();
 		
-		verifyTopic(t);
+		verifyTopic(notification);
 		
 		final ChannelPromise readyPromise = this.connectionReadyPromise;
 		
@@ -565,16 +561,18 @@ class APNsHttp2Client<T extends PushNotification> {
 				
 				@Override
 				public void run() {
-					if (APNsHttp2Client.this.responsePromises.containsKey(t)) {
+					if (APNsHttp2Client.this.responsePromises
+							.containsKey(notification)) {
 						promise.setFailure(new IllegalStateException(
 								"The given notification has already been sent and not yet resolved."));
 					} else {
-						APNsHttp2Client.this.responsePromises.put(t, promise);
+						APNsHttp2Client.this.responsePromises.put(notification,
+								promise);
 					}
 				}
 			});
 			
-			readyPromise.channel().write(t)
+			readyPromise.channel().write(notification)
 					.addListener(new GenericFutureListener<ChannelFuture>() {
 						
 						@Override
@@ -583,9 +581,10 @@ class APNsHttp2Client<T extends PushNotification> {
 							if (!future.isSuccess()) {
 								log.debug(
 										"Failed to write push notification: {}",
-										t, future.cause());
+										notification, future.cause());
 								
-								APNsHttp2Client.this.responsePromises.remove(t);
+								APNsHttp2Client.this.responsePromises
+										.remove(notification);
 								promise.tryFailure(future.cause());
 							}
 						}
@@ -595,7 +594,7 @@ class APNsHttp2Client<T extends PushNotification> {
 		} else {
 			log.debug(
 					"Failed to send push notification because client is not connected: {}",
-					t);
+					notification);
 			respFuture = new FailedFuture<>(GlobalEventExecutor.INSTANCE,
 					NOT_CONNECTED_EXCEPTION);
 		}
@@ -638,7 +637,7 @@ class APNsHttp2Client<T extends PushNotification> {
 			this.gracefulShutdownTimeoutMillis = timeoutMillis;
 			
 			if (this.connectionReadyPromise != null) {
-				final HttpClientHandler handler = this.connectionReadyPromise
+				final HttpClientHandler<?> handler = this.connectionReadyPromise
 						.channel().pipeline().get(HttpClientHandler.class);
 				
 				if (handler != null) {
@@ -661,7 +660,7 @@ class APNsHttp2Client<T extends PushNotification> {
 				channelCloseFuture = this.connectionReadyPromise.channel()
 						.close();
 			} else {
-				channelCloseFuture = new SucceededFuture<>(
+				channelCloseFuture = new SucceededFuture<Void>(
 						GlobalEventExecutor.INSTANCE, null);
 			}
 			
