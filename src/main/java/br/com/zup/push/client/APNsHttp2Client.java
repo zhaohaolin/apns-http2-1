@@ -184,6 +184,79 @@ class APNsHttp2Client<T extends PushNotification> {
 		
 	}
 	
+	private class ApplicationProtocolNegotiationHandlerImpl extends
+			ApplicationProtocolNegotiationHandler {
+		
+		/**
+		 * TODO
+		 * @param fallbackProtocol
+		 */
+		protected ApplicationProtocolNegotiationHandlerImpl(
+				String fallbackProtocol) {
+			super(fallbackProtocol);
+			// TODO Auto-generated constructor stub
+		}
+		
+		@Override
+		protected void configurePipeline(final ChannelHandlerContext ctx,
+				final String protocol) {
+			if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
+				final ApnsClientHandlerBuilder<T> builder = new ApnsClientHandlerBuilder<T>();
+				final HttpClientHandler<T> handler = builder
+						.server(false)
+						.apnsClient(APNsHttp2Client.this)
+						.authority(
+								((InetSocketAddress) ctx.channel()
+										.remoteAddress()).getHostName())
+						.maxUnflushedNotifications(
+								HttpProperties.DEFAULT_MAX_UNFLUSHED_NOTIFICATIONS)
+						.encoderEnforceMaxConcurrentStreams(true).build();
+				
+				synchronized (APNsHttp2Client.this.boot) {
+					if (APNsHttp2Client.this.gracefulShutdownTimeoutMillis != null) {
+						handler.gracefulShutdownTimeoutMillis(APNsHttp2Client.this.gracefulShutdownTimeoutMillis);
+					}
+				}
+				
+				ctx.pipeline().addLast(
+						new IdleStateHandler(0,
+								HttpProperties.DEFAULT_FLUSH_AFTER_IDLE_MILLIS,
+								HttpProperties.PING_IDLE_TIME_MILLIS,
+								TimeUnit.MILLISECONDS));
+				ctx.pipeline().addLast(handler);
+				
+				ctx.channel().eventLoop().submit(new Runnable() {
+					
+					@Override
+					public void run() {
+						final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
+						
+						if (connectionReadyPromise != null) {
+							connectionReadyPromise.trySuccess();
+						}
+					}
+				});
+				
+			} else {
+				log.error("Unexpected protocol: {}", protocol);
+				ctx.close();
+			}
+		}
+		
+		@Override
+		protected void handshakeFailure(final ChannelHandlerContext context,
+				final Throwable cause) throws Exception {
+			final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
+			
+			if (connectionReadyPromise != null) {
+				connectionReadyPromise.tryFailure(cause);
+			}
+			
+			super.handshakeFailure(context, cause);
+		}
+		
+	}
+	
 	public APNsHttp2Client(final File p12File, final String password)
 			throws IOException, KeyStoreException {
 		this(p12File, password, null);
@@ -305,8 +378,7 @@ class APNsHttp2Client<T extends PushNotification> {
 		} else {
 			sslProvider = SslProvider.JDK;
 		}
-		
-		return SslContextBuilder
+		SslContextBuilder builder = SslContextBuilder
 				.forClient()
 				.sslProvider(sslProvider)
 				.ciphers(Http2SecurityUtil.CIPHERS,
@@ -316,6 +388,7 @@ class APNsHttp2Client<T extends PushNotification> {
 								SelectorFailureBehavior.NO_ADVERTISE,
 								SelectedListenerFailureBehavior.ACCEPT,
 								ApplicationProtocolNames.HTTP_2));
+		return builder;
 	}
 	
 	protected APNsHttp2Client(final SslContext sslCtx,
@@ -351,71 +424,8 @@ class APNsHttp2Client<T extends PushNotification> {
 							TimeUnit.MILLISECONDS));
 				
 				pipeline.addLast(sslCtx.newHandler(channel.alloc()));
-				pipeline.addLast(new ApplicationProtocolNegotiationHandler("") {
-					@Override
-					protected void configurePipeline(
-							final ChannelHandlerContext ctx,
-							final String protocol) {
-						if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
-							final ApnsClientHandlerBuilder<T> builder = new ApnsClientHandlerBuilder<T>();
-							final HttpClientHandler<T> handler = builder
-									.server(false)
-									.apnsClient(APNsHttp2Client.this)
-									.authority(
-											((InetSocketAddress) ctx.channel()
-													.remoteAddress())
-													.getHostName())
-									.maxUnflushedNotifications(
-											HttpProperties.DEFAULT_MAX_UNFLUSHED_NOTIFICATIONS)
-									.encoderEnforceMaxConcurrentStreams(true)
-									.build();
-							
-							synchronized (APNsHttp2Client.this.boot) {
-								if (APNsHttp2Client.this.gracefulShutdownTimeoutMillis != null) {
-									handler.gracefulShutdownTimeoutMillis(APNsHttp2Client.this.gracefulShutdownTimeoutMillis);
-								}
-							}
-							
-							ctx.pipeline()
-									.addLast(
-											new IdleStateHandler(
-													0,
-													HttpProperties.DEFAULT_FLUSH_AFTER_IDLE_MILLIS,
-													HttpProperties.PING_IDLE_TIME_MILLIS,
-													TimeUnit.MILLISECONDS));
-							ctx.pipeline().addLast(handler);
-							
-							ctx.channel().eventLoop().submit(new Runnable() {
-								
-								@Override
-								public void run() {
-									final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
-									
-									if (connectionReadyPromise != null) {
-										connectionReadyPromise.trySuccess();
-									}
-								}
-							});
-							
-						} else {
-							log.error("Unexpected protocol: {}", protocol);
-							ctx.close();
-						}
-					}
-					
-					@Override
-					protected void handshakeFailure(
-							final ChannelHandlerContext context,
-							final Throwable cause) throws Exception {
-						final ChannelPromise connectionReadyPromise = APNsHttp2Client.this.connectionReadyPromise;
-						
-						if (connectionReadyPromise != null) {
-							connectionReadyPromise.tryFailure(cause);
-						}
-						
-						super.handshakeFailure(context, cause);
-					}
-				});
+				pipeline.addLast(new ApplicationProtocolNegotiationHandlerImpl(
+						""));
 			}
 		});
 	}
@@ -592,11 +602,12 @@ class APNsHttp2Client<T extends PushNotification> {
 			
 			respFuture = promise;
 		} else {
-			log.debug(
+			// TODO send failed to processed
+			log.error(
 					"Failed to send push notification because client is not connected: {}",
 					notification);
-			respFuture = new FailedFuture<>(GlobalEventExecutor.INSTANCE,
-					NOT_CONNECTED_EXCEPTION);
+			respFuture = new FailedFuture<PushResponse<T>>(
+					GlobalEventExecutor.INSTANCE, NOT_CONNECTED_EXCEPTION);
 		}
 		
 		respFuture
