@@ -592,11 +592,12 @@ class APNsHttp2Client<T extends PushNotification> {
 			
 			respFuture = promise;
 		} else {
-			log.debug(
+			// TODO send failed to processed 
+			log.error(
 					"Failed to send push notification because client is not connected: {}",
 					notification);
-			respFuture = new FailedFuture<>(GlobalEventExecutor.INSTANCE,
-					NOT_CONNECTED_EXCEPTION);
+			respFuture = new FailedFuture<PushResponse<T>>(
+					GlobalEventExecutor.INSTANCE, NOT_CONNECTED_EXCEPTION);
 		}
 		
 		respFuture

@@ -5,7 +5,6 @@ import io.netty.util.concurrent.Future;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.SocketAddress;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.util.concurrent.ExecutionException;
@@ -15,14 +14,9 @@ import javax.net.ssl.SSLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import br.com.zup.push.data.DefaultPushNotification;
 import br.com.zup.push.data.PushNotification;
 import br.com.zup.push.data.PushResponse;
-import br.com.zup.push.data.DefaultPushNotification;
-import br.com.zup.push.proxy.HttpProxyHandlerFactory;
-import br.com.zup.push.proxy.ProxyConfig;
-import br.com.zup.push.proxy.ProxyHandlerFactory;
-import br.com.zup.push.proxy.Socks4ProxyHandlerFactory;
-import br.com.zup.push.proxy.Socks5ProxyHandlerFactory;
 import br.com.zup.push.util.P12Util;
 
 public class APNsClient {
