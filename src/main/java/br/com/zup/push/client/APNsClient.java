@@ -21,11 +21,11 @@ import br.com.zup.push.util.P12Util;
 
 public class APNsClient {
 	
-	private static final Logger					LOG	= LoggerFactory
-															.getLogger(APNsClient.class);
+	private static final Logger				LOG	= LoggerFactory
+														.getLogger(APNsClient.class);
 	
 	private Http2Client<PushNotification>	http2Client;
-	private boolean								sandboxEnvironment;
+	private boolean							sandboxEnvironment;
 	
 	public APNsClient(final File certificateFile, final String password)
 			throws SSLException {

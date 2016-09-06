@@ -83,10 +83,12 @@ class Http2ClientHandler<T extends PushNotification> extends
 																						.getLogger(Http2ClientHandler.class);
 	
 	protected class ApnsClientHandlerFrameAdapter extends Http2FrameAdapter {
+		
 		@Override
-		public void onSettingsRead(final ChannelHandlerContext context,
+		public void onSettingsRead(final ChannelHandlerContext ctx,
 				final Http2Settings settings) {
-			LOG.trace("Received settings from APNs gateway: {}", settings);
+			LOG.trace("Received settings from APNs gateway: {} {}", settings,
+					ctx.channel().remoteAddress());
 			
 			synchronized (Http2ClientHandler.this.receivedInitialSettings) {
 				Http2ClientHandler.this.receivedInitialSettings.set(true);
@@ -95,7 +97,7 @@ class Http2ClientHandler<T extends PushNotification> extends
 		}
 		
 		@Override
-		public int onDataRead(final ChannelHandlerContext context,
+		public int onDataRead(final ChannelHandlerContext ctx,
 				final int streamId, final ByteBuf data, final int padding,
 				final boolean endOfStream) throws Http2Exception {
 			LOG.trace("Received data from APNs gateway on stream {}: {}",
@@ -137,7 +139,7 @@ class Http2ClientHandler<T extends PushNotification> extends
 		}
 		
 		@Override
-		public void onHeadersRead(final ChannelHandlerContext context,
+		public void onHeadersRead(final ChannelHandlerContext ctx,
 				final int streamId, final Http2Headers headers,
 				final int padding, final boolean endOfStream)
 				throws Http2Exception {
@@ -165,22 +167,26 @@ class Http2ClientHandler<T extends PushNotification> extends
 		}
 		
 		@Override
-		public void onPingAckRead(final ChannelHandlerContext context,
+		public void onPingAckRead(final ChannelHandlerContext ctx,
 				final ByteBuf data) {
 			if (Http2ClientHandler.this.pingTimeoutFuture != null) {
-				LOG.trace("Received reply to ping.");
+				LOG.trace("Received reply to ping. {}", ctx.channel()
+						.remoteAddress());
 				Http2ClientHandler.this.pingTimeoutFuture.cancel(false);
 			} else {
-				LOG.error("Received PING ACK, but no corresponding outbound PING found.");
+				LOG.error(
+						"Received PING ACK, but no corresponding outbound PING found.{}",
+						ctx.channel().remoteAddress());
 			}
 		}
 		
 		@Override
-		public void onGoAwayRead(final ChannelHandlerContext context,
+		public void onGoAwayRead(final ChannelHandlerContext ctx,
 				final int lastStreamId, final long errorCode,
 				final ByteBuf debugData) throws Http2Exception {
-			LOG.info("Received GOAWAY from APNs server: {}",
-					debugData.toString(StandardCharsets.UTF_8));
+			LOG.info("Received GOAWAY from APNs server: {} {}", debugData
+					.toString(StandardCharsets.UTF_8), ctx.channel()
+					.remoteAddress());
 			
 			ErrorResponse errorResponse = GSON.fromJson(
 					debugData.toString(StandardCharsets.UTF_8),
@@ -203,9 +209,8 @@ class Http2ClientHandler<T extends PushNotification> extends
 	}
 	
 	@Override
-	public void write(final ChannelHandlerContext context,
-			final Object message, final ChannelPromise writePromise)
-			throws Http2Exception {
+	public void write(final ChannelHandlerContext ctx, final Object message,
+			final ChannelPromise writePromise) throws Http2Exception {
 		try {
 			final T notification = (T) message;
 			
@@ -229,18 +234,18 @@ class Http2ClientHandler<T extends PushNotification> extends
 				headers.add(APNS_TOPIC_HEADER, notification.getTopic());
 			}
 			
-			final ChannelPromise headersPromise = context.newPromise();
-			this.encoder().writeHeaders(context, streamId, headers, 0, false,
+			final ChannelPromise headersPromise = ctx.newPromise();
+			this.encoder().writeHeaders(ctx, streamId, headers, 0, false,
 					headersPromise);
 			LOG.trace("Wrote headers on stream {}: {}", streamId, headers);
 			
-			final ByteBuf payloadBuffer = context.alloc().ioBuffer(
+			final ByteBuf payloadBuffer = ctx.alloc().ioBuffer(
 					INITIAL_PAYLOAD_BUFFER_CAPACITY);
 			payloadBuffer.writeBytes(notification.getPayload().getBytes(
 					StandardCharsets.UTF_8));
 			
-			final ChannelPromise dataPromise = context.newPromise();
-			this.encoder().writeData(context, streamId, payloadBuffer, 0, true,
+			final ChannelPromise dataPromise = ctx.newPromise();
+			this.encoder().writeData(ctx, streamId, payloadBuffer, 0, true,
 					dataPromise);
 			LOG.trace("Wrote payload on stream {}: {}", streamId,
 					notification.getPayload());
@@ -269,16 +274,16 @@ class Http2ClientHandler<T extends PushNotification> extends
 			this.nextStreamId += 2;
 			
 			if (++this.unflushedNotifications >= this.maxUnflushedNotifications) {
-				this.flush(context);
+				this.flush(ctx);
 			}
 			
 			if (this.nextStreamId >= STREAM_ID_RESET_THRESHOLD) {
-				context.close();
+				ctx.close();
 			}
 			
 		} catch (final ClassCastException e) {
 			LOG.error("Unexpected object in pipeline: {}", message);
-			context.write(message, writePromise);
+			ctx.write(message, writePromise);
 		}
 	}
 	
@@ -291,26 +296,26 @@ class Http2ClientHandler<T extends PushNotification> extends
 	}
 	
 	@Override
-	public void userEventTriggered(final ChannelHandlerContext context,
+	public void userEventTriggered(final ChannelHandlerContext ctx,
 			final Object event) throws Exception {
 		if (event instanceof IdleStateEvent) {
 			final IdleStateEvent idleStateEvent = (IdleStateEvent) event;
 			
 			if (IdleState.WRITER_IDLE.equals(idleStateEvent.state())) {
 				if (this.unflushedNotifications > 0) {
-					this.flush(context);
+					this.flush(ctx);
 				}
 			} else {
 				assert PING_TIMEOUT_SECONDS < HttpProperties.PING_IDLE_TIME_MILLIS;
 				
-				LOG.trace("Sending ping due to inactivity.");
+				LOG.trace("Sending ping due to inactivity. {}", ctx.channel()
+						.remoteAddress());
 				
-				final ByteBuf pingDataBuffer = context.alloc().ioBuffer(8, 8);
+				final ByteBuf pingDataBuffer = ctx.alloc().ioBuffer(8, 8);
 				pingDataBuffer.writeLong(this.nextPingId++);
 				
 				this.encoder()
-						.writePing(context, false, pingDataBuffer,
-								context.newPromise())
+						.writePing(ctx, false, pingDataBuffer, ctx.newPromise())
 						.addListener(
 								new GenericFutureListener<ChannelFuture>() {
 									
@@ -342,11 +347,11 @@ class Http2ClientHandler<T extends PushNotification> extends
 									}
 								});
 				
-				this.flush(context);
+				this.flush(ctx);
 			}
 		}
 		
-		super.userEventTriggered(context, event);
+		super.userEventTriggered(ctx, event);
 	}
 	
 	@Override

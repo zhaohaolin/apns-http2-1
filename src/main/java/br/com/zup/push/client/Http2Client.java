@@ -96,6 +96,8 @@ class Http2Client<T extends PushNotification> {
 	private static final Logger							LOG								= LoggerFactory
 																								.getLogger(Http2Client.class);
 	
+	private static String								name							= "";
+	
 	// close future listener
 	private class CloseFutureListener implements
 			GenericFutureListener<ChannelFuture> {
@@ -115,14 +117,18 @@ class Http2Client<T extends PushNotification> {
 				if (Http2Client.this.connectionReadyPromise != null) {
 					Http2Client.this.connectionReadyPromise
 							.tryFailure(new IllegalStateException(
-									"Channel closed before HTTP/2 preface completed."));
+									name
+											+ "-> Channel closed before HTTP/2 preface completed."));
 					Http2Client.this.connectionReadyPromise = null;
 				}
 				
 				if (Http2Client.this.reconnectionPromise != null) {
 					LOG.debug(
-							"Disconnected. Next automatic reconnection attempt in {} seconds.",
+							name
+									+ "-> Disconnected. Next automatic reconnection attempt in {} seconds.",
 							Http2Client.this.reconnectDelaySeconds);
+					
+					// reconnect task start
 					future.channel()
 							.eventLoop()
 							.schedule(new Runnable() {
@@ -149,7 +155,8 @@ class Http2Client<T extends PushNotification> {
 							.values()) {
 						responsePromise
 								.tryFailure(new ClientNotConnectedException(
-										"Client disconnected unexpectedly."));
+										name
+												+ "-> Client disconnected unexpectedly."));
 					}
 					
 					Http2Client.this.responsePromises.clear();
@@ -168,23 +175,22 @@ class Http2Client<T extends PushNotification> {
 			if (future.isSuccess()) {
 				synchronized (Http2Client.this.bootstrap) {
 					if (Http2Client.this.reconnectionPromise != null) {
-						LOG.info("Connection to {} restored.", future.channel()
-								.remoteAddress());
+						LOG.info(name + "-> Connection to {} restored.", future
+								.channel().remoteAddress());
 						Http2Client.this.reconnectionPromise.trySuccess();
 					} else {
-						LOG.info("Connected to {}.", future.channel()
-								.remoteAddress());
+						LOG.info(name + "-> Connection to {}.", future
+								.channel().remoteAddress());
 					}
-					
 				}
 				
+				Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+				Http2Client.this.reconnectionPromise = future.channel()
+						.newPromise();
 			} else {
-				LOG.info("Failed to connect.", future.cause());
+				LOG.info(name + "-> Failed to connect.", future.cause());
 			}
 			
-			Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
-			Http2Client.this.reconnectionPromise = future.channel()
-					.newPromise();
 		}
 		
 	}
@@ -225,6 +231,7 @@ class Http2Client<T extends PushNotification> {
 								TimeUnit.MILLISECONDS));
 				ctx.pipeline().addLast(handler);
 				
+				// start try success task
 				ctx.channel().eventLoop().submit(new Runnable() {
 					
 					@Override
@@ -238,7 +245,7 @@ class Http2Client<T extends PushNotification> {
 				});
 				
 			} else {
-				LOG.error("Unexpected protocol: {}", protocol);
+				LOG.error(name + "-> Unexpected protocol: {}", protocol);
 				ctx.close();
 			}
 		}
@@ -273,15 +280,19 @@ class Http2Client<T extends PushNotification> {
 	}
 	
 	public Http2Client(KeyStore keyStore, final String password)
-			throws SSLException {
+			throws KeyStoreException, IOException {
 		this(keyStore, password, null);
 	}
 	
 	public Http2Client(final KeyStore keyStore, final String password,
-			final EventLoopGroup eventLoopGroup) throws SSLException {
+			final EventLoopGroup eventLoopGroup) throws KeyStoreException,
+			IOException {
 		this(Http2Client.getSslContextWithP12InputStream(keyStore, password),
 				eventLoopGroup);
 		loadIdentifiers(keyStore);
+		if (null != this.identities && !this.identities.isEmpty()) {
+			name = this.identities.get(0);
+		}
 	}
 	
 	public void abortConnection(ErrorResponse errorResponse)
@@ -293,19 +304,24 @@ class Http2Client<T extends PushNotification> {
 	}
 	
 	private static KeyStore loadKeyStore(final InputStream p12InputStream,
-			final String password) throws SSLException {
+			final String password) throws KeyStoreException, IOException {
 		try {
 			return P12Util.loadPCKS12KeyStore(p12InputStream, password);
-		} catch (KeyStoreException | IOException e) {
-			throw new SSLException(e);
+		} catch (KeyStoreException e) {
+			throw e;
+		} catch (IOException e) {
+			throw e;
 		}
 	}
 	
-	private void loadIdentifiers(KeyStore keyStore) throws SSLException {
+	private void loadIdentifiers(KeyStore keyStore) throws KeyStoreException,
+			IOException {
 		try {
 			this.identities = P12Util.getIdentitiesForP12File(keyStore);
-		} catch (KeyStoreException | IOException e) {
-			throw new SSLException(e);
+		} catch (KeyStoreException e) {
+			throw e;
+		} catch (IOException e) {
+			throw e;
 		}
 	}
 	
@@ -344,7 +360,8 @@ class Http2Client<T extends PushNotification> {
 			
 			if (!(certificate instanceof X509Certificate)) {
 				throw new KeyStoreException(
-						"Found a certificate in the provided PKCS#12 file, but it was not an X.509 certificate.");
+						name
+								+ "-> Found a certificate in the provided PKCS#12 file, but it was not an X.509 certificate.");
 			}
 			
 			x509Certificate = (X509Certificate) certificate;
@@ -438,7 +455,8 @@ class Http2Client<T extends PushNotification> {
 	private Class<? extends Channel> getSocketChannelClass(
 			final EventLoopGroup eventLoopGroup) {
 		if (eventLoopGroup == null) {
-			LOG.warn("Asked for socket channel class to work with null event loop group, returning NioSocketChannel class.");
+			LOG.warn(name
+					+ "-> Asked for socket channel class to work with null event loop group, returning NioSocketChannel class.");
 			return NioSocketChannel.class;
 		}
 		
@@ -453,7 +471,8 @@ class Http2Client<T extends PushNotification> {
 		}
 		
 		throw new IllegalArgumentException(
-				"Don't know which socket channel class to return for event loop group "
+				name
+						+ "-> Don't know which socket channel class to return for event loop group "
 						+ className);
 	}
 	
@@ -504,7 +523,8 @@ class Http2Client<T extends PushNotification> {
 			connectionReadyFuture = new FailedFuture<Void>(
 					GlobalEventExecutor.INSTANCE,
 					new IllegalStateException(
-							"Client's event loop group has been shut down and cannot be restarted."));
+							name
+									+ "-> Client's event loop group has been shutdown and cannot be restarted."));
 			return connectionReadyFuture;
 		}
 		
@@ -550,8 +570,8 @@ class Http2Client<T extends PushNotification> {
 			} else {
 				reconnectionFuture = new FailedFuture<Void>(
 						GlobalEventExecutor.INSTANCE,
-						new IllegalStateException(
-								"Client was not previously connected."));
+						new IllegalStateException(name
+								+ "-> Client was not previously connected."));
 			}
 		}
 		
@@ -578,7 +598,8 @@ class Http2Client<T extends PushNotification> {
 					if (Http2Client.this.responsePromises
 							.containsKey(notification)) {
 						promise.setFailure(new IllegalStateException(
-								"The given notification has already been sent and not yet resolved."));
+								name
+										+ "-> The given notification has already been sent and not yet resolved."));
 					} else {
 						Http2Client.this.responsePromises.put(notification,
 								promise);
@@ -594,7 +615,8 @@ class Http2Client<T extends PushNotification> {
 								throws Exception {
 							if (!future.isSuccess()) {
 								LOG.debug(
-										"Failed to write push notification: {}",
+										name
+												+ "-> Failed to write push notification: {}",
 										notification, future.cause());
 								
 								Http2Client.this.responsePromises
@@ -609,7 +631,8 @@ class Http2Client<T extends PushNotification> {
 			
 			// TODO send failed to processed
 			LOG.error(
-					"Failed to send push notification because client is not connected: {}",
+					name
+							+ "-> Failed to send push notification because client is not connected: {}",
 					notification);
 			respFuture = new FailedFuture<PushResponse<T>>(
 					GlobalEventExecutor.INSTANCE, NOT_CONNECTED_EXCEPTION);
