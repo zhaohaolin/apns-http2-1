@@ -17,6 +17,8 @@ import io.netty.channel.socket.oio.OioSocketChannel;
 import io.netty.handler.codec.http2.Http2Error;
 import io.netty.handler.codec.http2.Http2Exception;
 import io.netty.handler.codec.http2.Http2SecurityUtil;
+import io.netty.handler.logging.LogLevel;
+import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.ApplicationProtocolConfig.Protocol;
 import io.netty.handler.ssl.ApplicationProtocolConfig.SelectedListenerFailureBehavior;
@@ -34,6 +36,7 @@ import io.netty.resolver.AddressResolverGroup;
 import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NoopAddressResolverGroup;
 import io.netty.util.concurrent.DefaultPromise;
+import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.FailedFuture;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
@@ -93,6 +96,7 @@ class Http2Client<T extends PushNotification> {
 	private static final Logger							LOG								= LoggerFactory
 																								.getLogger(Http2Client.class);
 	
+	// close future listener
 	private class CloseFutureListener implements
 			GenericFutureListener<ChannelFuture> {
 		
@@ -154,6 +158,7 @@ class Http2Client<T extends PushNotification> {
 		}
 	}
 	
+	// connect future listener
 	private class ConnectFutureListener implements
 			GenericFutureListener<ChannelFuture> {
 		
@@ -171,15 +176,15 @@ class Http2Client<T extends PushNotification> {
 								.remoteAddress());
 					}
 					
-					Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
-					Http2Client.this.reconnectionPromise = future.channel()
-							.newPromise();
 				}
 				
 			} else {
-				// TODO 连接失败,是否继续发起重连接操作
 				LOG.info("Failed to connect.", future.cause());
 			}
+			
+			Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+			Http2Client.this.reconnectionPromise = future.channel()
+					.newPromise();
 		}
 		
 	}
@@ -187,11 +192,6 @@ class Http2Client<T extends PushNotification> {
 	private class ApplicationProtocolNegotiationHandlerImpl extends
 			ApplicationProtocolNegotiationHandler {
 		
-		/**
-		 * TODO
-		 * 
-		 * @param fallbackProtocol
-		 */
 		protected ApplicationProtocolNegotiationHandlerImpl(
 				String fallbackProtocol) {
 			super(fallbackProtocol);
@@ -397,7 +397,8 @@ class Http2Client<T extends PushNotification> {
 			this.bootstrap.group(group);
 			this.shouldShutDownEventLoopGroup = false;
 		} else {
-			this.bootstrap.group(new NioEventLoopGroup(1));
+			this.bootstrap.group(new NioEventLoopGroup(1,
+					new DefaultThreadFactory("HTTP2APNs")));
 			this.shouldShutDownEventLoopGroup = true;
 		}
 		
@@ -410,6 +411,10 @@ class Http2Client<T extends PushNotification> {
 			protected void initChannel(final SocketChannel channel)
 					throws Exception {
 				final ChannelPipeline pipeline = channel.pipeline();
+				
+				// the physical layer
+				// logger
+				pipeline.addLast("logger", new LoggingHandler(LogLevel.DEBUG));
 				
 				final ProxyHandlerFactory factory = Http2Client.this.proxyHandlerFactory;
 				if (factory != null) {
@@ -424,6 +429,8 @@ class Http2Client<T extends PushNotification> {
 				pipeline.addLast(sslCtx.newHandler(channel.alloc()));
 				pipeline.addLast(new ApplicationProtocolNegotiationHandlerImpl(
 						""));
+				
+				// the application layer
 			}
 		});
 	}
@@ -489,7 +496,7 @@ class Http2Client<T extends PushNotification> {
 				HttpProperties.DEFAULT_APNS_PORT);
 	}
 	
-	public Future<Void> connect(final String host, final int port) {
+	private Future<Void> connect(final String host, final int port) {
 		final Future<Void> connectionReadyFuture;
 		
 		if (this.bootstrap.config().group().isShuttingDown()
@@ -498,23 +505,23 @@ class Http2Client<T extends PushNotification> {
 					GlobalEventExecutor.INSTANCE,
 					new IllegalStateException(
 							"Client's event loop group has been shut down and cannot be restarted."));
-		} else {
-			synchronized (this.bootstrap) {
-				//
-				this.connectionReadyPromise = null;
-				final ChannelFuture connectFuture = this.bootstrap.connect(
-						host, port);
-				this.connectionReadyPromise = connectFuture.channel()
-						.newPromise();
-				
-				connectFuture.channel().closeFuture()
-						.addListener(new CloseFutureListener(host, port));
-				
-				this.connectionReadyPromise
-						.addListener(new ConnectFutureListener());
-				
-				connectionReadyFuture = this.connectionReadyPromise;
-			}
+			return connectionReadyFuture;
+		}
+		
+		synchronized (this.bootstrap) {
+			//
+			this.connectionReadyPromise = null;
+			final ChannelFuture connectFuture = this.bootstrap.connect(host,
+					port);
+			this.connectionReadyPromise = connectFuture.channel().newPromise();
+			
+			connectFuture.channel().closeFuture()
+					.addListener(new CloseFutureListener(host, port));
+			
+			this.connectionReadyPromise
+					.addListener(new ConnectFutureListener());
+			
+			connectionReadyFuture = this.connectionReadyPromise;
 		}
 		
 		return connectionReadyFuture;
