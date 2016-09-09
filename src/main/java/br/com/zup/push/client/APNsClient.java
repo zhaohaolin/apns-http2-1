@@ -151,7 +151,7 @@ public class APNsClient {
 	// return null;
 	// }
 	
-	private void stablishConnection() throws InterruptedException {
+	public void stablishConnection() throws InterruptedException {
 		final Future<Void> connectFuture = sandboxEnvironment ? this.http2Client
 				.connectSandBox() : this.http2Client.connectProduction();
 		connectFuture.await();

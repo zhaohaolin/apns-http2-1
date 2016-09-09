@@ -300,7 +300,6 @@ class Http2Client<T extends PushNotification> {
 		disconnect();
 		throw new Http2Exception(Http2Error.CONNECT_ERROR,
 				errorResponse.getReason());
-		
 	}
 	
 	private static KeyStore loadKeyStore(final InputStream p12InputStream,
@@ -366,7 +365,9 @@ class Http2Client<T extends PushNotification> {
 			
 			x509Certificate = (X509Certificate) certificate;
 			privateKey = privateKeyEntry.getPrivateKey();
-		} catch (final KeyStoreException | IOException e) {
+		} catch (final KeyStoreException e) {
+			throw new SSLException(e);
+		} catch (final IOException e) {
 			throw new SSLException(e);
 		}
 		
