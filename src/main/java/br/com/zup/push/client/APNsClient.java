@@ -8,6 +8,8 @@ import java.io.InputStream;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLException;
 
@@ -59,7 +61,7 @@ public class APNsClient {
 	
 	public PushResponse<PushNotification> pushMessageSync(final String message,
 			final String token) throws ExecutionException,
-			CertificateNotValidException {
+			CertificateNotValidException, TimeoutException {
 		try {
 			if (!this.http2Client.isConnected()) {
 				stablishConnection();
@@ -68,12 +70,12 @@ public class APNsClient {
 					token, null, message);
 			final Future<PushResponse<PushNotification>> future = this.http2Client
 					.sendNotification(notification);
-			final PushResponse<PushNotification> resp = future.get();
-			
+			// final PushResponse<PushNotification> resp = future.get();
+			final PushResponse<PushNotification> resp = future.get(1,
+					TimeUnit.SECONDS);
 			return resp;
 		} catch (final ExecutionException e) {
 			LOG.error("Failed to send push notification.", e);
-			// e.printStackTrace();
 			
 			if (e.getCause() instanceof CertificateNotValidException) {
 				throw e;
@@ -151,10 +153,28 @@ public class APNsClient {
 	// return null;
 	// }
 	
-	public void stablishConnection() throws InterruptedException {
-		final Future<Void> connectFuture = sandboxEnvironment ? this.http2Client
-				.connectSandBox() : this.http2Client.connectProduction();
-		connectFuture.await();
+	int	times	= 0;
+	
+	public synchronized void stablishConnection() throws InterruptedException {
+		try {
+			final Future<Void> connectFuture = sandboxEnvironment ? this.http2Client
+					.connectSandBox() : this.http2Client.connectProduction();
+			// connectFuture.await();
+			connectFuture.await(10, TimeUnit.SECONDS);
+			return;
+		} catch (Exception e) {
+			LOG.error("stablishConnection failure: ", e);
+			// re connect
+			times++;
+			if (times < 10) {
+				stablishConnection();
+				return;
+			}
+			
+			throw e;
+		} finally {
+			times = 0;
+		}
 	}
 	
 	public void disconnect() {
