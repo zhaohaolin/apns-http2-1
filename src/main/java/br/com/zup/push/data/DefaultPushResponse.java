@@ -2,25 +2,24 @@ package br.com.zup.push.data;
 
 import java.util.Date;
 
-public class DefaultPushResponse<T extends PushNotification>
-		implements PushResponse<T> {
-	private final T			pushNotification;
-	private final boolean	success;
-	private final String	rejectionReason;
-	private final Date		tokenExpirationTimestamp;
+public class DefaultPushResponse implements PushResponse {
+	private final PushNotification	notification;
+	private final boolean			success;
+	private final String			rejectionReason;
+	private final Date				tokenExpirationTimestamp;
 	
-	public DefaultPushResponse(final T pushNotification,
+	public DefaultPushResponse(final PushNotification notification,
 			final boolean success, final String rejectionReason,
 			final Date tokenExpirationTimestamp) {
-		this.pushNotification = pushNotification;
+		this.notification = notification;
 		this.success = success;
 		this.rejectionReason = rejectionReason;
 		this.tokenExpirationTimestamp = tokenExpirationTimestamp;
 	}
 	
 	@Override
-	public T getPushNotification() {
-		return this.pushNotification;
+	public PushNotification getNotification() {
+		return this.notification;
 	}
 	
 	@Override
@@ -41,8 +40,8 @@ public class DefaultPushResponse<T extends PushNotification>
 	@Override
 	public String toString() {
 		final StringBuilder builder = new StringBuilder();
-		builder.append("ZupPushNotificationResponse [pushNotification=");
-		builder.append(this.pushNotification);
+		builder.append("DefaultPushResponse [pushNotification=");
+		builder.append(this.notification);
 		builder.append(", success=");
 		builder.append(this.success);
 		builder.append(", rejectionReason=");

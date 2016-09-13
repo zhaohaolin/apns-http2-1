@@ -11,33 +11,31 @@ import io.netty.handler.codec.http2.Http2Settings;
 
 import java.util.Objects;
 
-import br.com.zup.push.data.PushNotification;
-
 /**
  * TODO
  * 
  * @author joe.zhao
  * @version $Id: Http2ClientHandlerBuilder, v 0.1 2016年9月5日 上午8:53:01 Exp $
  */
-public class Http2ClientHandlerBuilder<S extends PushNotification>
+public class Http2ClientHandlerBuilder
 		extends
-		AbstractHttp2ConnectionHandlerBuilder<Http2ClientHandler<S>, Http2ClientHandlerBuilder<S>> {
+		AbstractHttp2ConnectionHandlerBuilder<Http2ClientHandler, Http2ClientHandlerBuilder> {
 	
-	private Http2Client<S>	http2Client;
-	private String			authority;
-	private int				maxUnflushedNotifications	= 0;
+	private Http2Client	http2Client;
+	private String		authority;
+	private int			maxUnflushedNotifications	= 0;
 	
-	public Http2ClientHandlerBuilder<S> http2Client(
-			final Http2Client<S> pushHttpClient) {
+	public Http2ClientHandlerBuilder http2Client(
+			final Http2Client pushHttpClient) {
 		this.http2Client = pushHttpClient;
 		return this;
 	}
 	
-	public Http2Client<S> http2Client() {
+	public Http2Client http2Client() {
 		return this.http2Client;
 	}
 	
-	public Http2ClientHandlerBuilder<S> authority(final String authority) {
+	public Http2ClientHandlerBuilder authority(final String authority) {
 		this.authority = authority;
 		return this;
 	}
@@ -46,7 +44,7 @@ public class Http2ClientHandlerBuilder<S extends PushNotification>
 		return this.authority;
 	}
 	
-	public Http2ClientHandlerBuilder<S> maxUnflushedNotifications(
+	public Http2ClientHandlerBuilder maxUnflushedNotifications(
 			final int maxUnflushedNotifications) {
 		this.maxUnflushedNotifications = maxUnflushedNotifications;
 		return this;
@@ -57,33 +55,33 @@ public class Http2ClientHandlerBuilder<S extends PushNotification>
 	}
 	
 	@Override
-	public Http2ClientHandlerBuilder<S> server(final boolean isServer) {
+	public Http2ClientHandlerBuilder server(final boolean isServer) {
 		return super.server(isServer);
 	}
 	
 	@Override
-	public Http2ClientHandlerBuilder<S> encoderEnforceMaxConcurrentStreams(
+	public Http2ClientHandlerBuilder encoderEnforceMaxConcurrentStreams(
 			final boolean enforceMaxConcurrentStreams) {
 		return super
 				.encoderEnforceMaxConcurrentStreams(enforceMaxConcurrentStreams);
 	}
 	
 	@Override
-	public Http2ClientHandler<S> build(final Http2ConnectionDecoder decoder,
+	public Http2ClientHandler build(final Http2ConnectionDecoder decoder,
 			final Http2ConnectionEncoder encoder,
 			final Http2Settings initialSettings) {
 		Objects.requireNonNull(this.authority(),
 				"Authority must be set before building an HttpClientHandler.");
 		
-		final Http2ClientHandler<S> handler = new Http2ClientHandler<S>(
-				decoder, encoder, initialSettings, this.http2Client(),
-				this.authority(), this.maxUnflushedNotifications());
+		final Http2ClientHandler handler = new Http2ClientHandler(decoder,
+				encoder, initialSettings, this.http2Client(), this.authority(),
+				this.maxUnflushedNotifications());
 		this.frameListener(handler.new ApnsClientHandlerFrameAdapter());
 		return handler;
 	}
 	
 	@Override
-	public Http2ClientHandler<S> build() {
+	public Http2ClientHandler build() {
 		return super.build();
 	}
 }

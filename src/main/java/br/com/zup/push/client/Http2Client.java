@@ -7,29 +7,17 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
-import io.netty.channel.ChannelPromise;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.oio.OioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.channel.socket.oio.OioSocketChannel;
 import io.netty.handler.codec.http2.Http2Error;
 import io.netty.handler.codec.http2.Http2Exception;
-import io.netty.handler.codec.http2.Http2SecurityUtil;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
-import io.netty.handler.ssl.ApplicationProtocolConfig;
-import io.netty.handler.ssl.ApplicationProtocolConfig.Protocol;
-import io.netty.handler.ssl.ApplicationProtocolConfig.SelectedListenerFailureBehavior;
-import io.netty.handler.ssl.ApplicationProtocolConfig.SelectorFailureBehavior;
 import io.netty.handler.ssl.ApplicationProtocolNames;
 import io.netty.handler.ssl.ApplicationProtocolNegotiationHandler;
-import io.netty.handler.ssl.OpenSsl;
 import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.SslProvider;
-import io.netty.handler.ssl.SupportedCipherSuiteFilter;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
 import io.netty.resolver.AddressResolverGroup;
@@ -37,12 +25,8 @@ import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NoopAddressResolverGroup;
 import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import io.netty.util.concurrent.FailedFuture;
-import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
-import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.concurrent.Promise;
-import io.netty.util.concurrent.SucceededFuture;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -50,150 +34,67 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.security.KeyStore;
-import java.security.KeyStore.PrivateKeyEntry;
 import java.security.KeyStoreException;
 import java.security.PrivateKey;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.ssl.SSLException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import br.com.zup.push.data.APNsCallBack;
 import br.com.zup.push.data.PushNotification;
 import br.com.zup.push.data.PushResponse;
 import br.com.zup.push.proxy.ProxyHandlerFactory;
 import br.com.zup.push.util.P12Util;
 
-class Http2Client<T extends PushNotification> {
+public class Http2Client {
 	
-	private static final String							EPOLL_EVENT_LOOP_GROUP_CLASS	= "io.netty.channel.epoll.EpollEventLoopGroup";
-	private static final String							EPOLL_SOCKET_CHANNEL_CLASS		= "io.netty.channel.epoll.EpollSocketChannel";
+	// private static:
+	private static final ScheduledExecutorService				exec				= Executors
+																							.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
+																									"APNsSession"));
+	private static final Logger									LOG					= LoggerFactory
+																							.getLogger(Http2Client.class);
 	
-	private final Bootstrap								bootstrap;
-	private final boolean								shouldShutDownEventLoopGroup;
-	private volatile ProxyHandlerFactory				proxyHandlerFactory;
+	// private final:
+	private final Bootstrap										bootstrap;
+	private final Map<PushNotification, Promise<PushResponse>>	responsePromises	= new IdentityHashMap<PushNotification, Promise<PushResponse>>();
+	private final APNsCallBack									callback;
 	
-	private Long										gracefulShutdownTimeoutMillis;
+	// private volatile：
+	private volatile ProxyHandlerFactory						proxyHandlerFactory;
 	
-	private volatile ChannelPromise						connectionReadyPromise;
-	private volatile ChannelPromise						reconnectionPromise;
-	private long										reconnectDelaySeconds			= HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+	private volatile ScheduledFuture<?>							lunchConnectFuture;
 	
-	private final Map<T, Promise<PushResponse<T>>>		responsePromises				= new IdentityHashMap<T, Promise<PushResponse<T>>>();
-	private final AtomicLong							nextNotificationId				= new AtomicLong(
-																								0);
-	private ArrayList<String>							identities;
+	// private:
+	private Long												gracefulShutdownTimeoutMillis;
+	private ArrayList<String>									identities;
+	private String												name				= "";
+	private long												reconnectTimeout	= HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
 	
-	private static final ClientNotConnectedException	NOT_CONNECTED_EXCEPTION			= new ClientNotConnectedException();
+	private String												host				= HttpProperties.PRODUCTION_APNS_HOST;
+	private int													port				= 443;
 	
-	private static final Logger							LOG								= LoggerFactory
-																								.getLogger(Http2Client.class);
-	
-	private static String								name							= "";
-	
-	// close future listener
-	private class CloseFutureListener implements
-			GenericFutureListener<ChannelFuture> {
-		
-		private final String	host;
-		private final int		port;
-		
-		public CloseFutureListener(String host, int port) {
-			this.host = host;
-			this.port = port;
-		}
-		
-		@Override
-		public void operationComplete(final ChannelFuture future)
-				throws Exception {
-			synchronized (Http2Client.this.bootstrap) {
-				if (Http2Client.this.connectionReadyPromise != null) {
-					Http2Client.this.connectionReadyPromise
-							.tryFailure(new IllegalStateException(
-									name
-											+ "-> Channel closed before HTTP/2 preface completed."));
-					Http2Client.this.connectionReadyPromise = null;
-				}
-				
-				if (Http2Client.this.reconnectionPromise != null) {
-					LOG.debug(
-							name
-									+ "-> Disconnected. Next automatic reconnection attempt in {} seconds.",
-							Http2Client.this.reconnectDelaySeconds);
-					
-					// reconnect task start
-					future.channel()
-							.eventLoop()
-							.schedule(new Runnable() {
-								
-								@Override
-								public void run() {
-									LOG.debug("Attempting to reconnect.");
-									Http2Client.this.connect(host, port);
-								}
-							}, Http2Client.this.reconnectDelaySeconds,
-									TimeUnit.SECONDS);
-					
-					Http2Client.this.reconnectDelaySeconds = Math.min(
-							Http2Client.this.reconnectDelaySeconds,
-							HttpProperties.MAX_RECONNECT_DELAY_SECONDS);
-				}
-			}
-			
-			future.channel().eventLoop().submit(new Runnable() {
-				
-				@Override
-				public void run() {
-					for (final Promise<PushResponse<T>> responsePromise : Http2Client.this.responsePromises
-							.values()) {
-						responsePromise
-								.tryFailure(new ClientNotConnectedException(
-										name
-												+ "-> Client disconnected unexpectedly."));
-					}
-					
-					Http2Client.this.responsePromises.clear();
-				}
-			});
-		}
-	}
-	
-	// connect future listener
-	private class ConnectFutureListener implements
-			GenericFutureListener<ChannelFuture> {
-		
-		@Override
-		public void operationComplete(final ChannelFuture future)
-				throws Exception {
-			if (future.isSuccess()) {
-				synchronized (Http2Client.this.bootstrap) {
-					if (Http2Client.this.reconnectionPromise != null) {
-						LOG.info(name + "-> Connection to {} restored.", future
-								.channel().remoteAddress());
-						Http2Client.this.reconnectionPromise.trySuccess();
-					} else {
-						LOG.info(name + "-> Connection to {}.", future
-								.channel().remoteAddress());
-					}
-				}
-				
-				Http2Client.this.reconnectDelaySeconds = HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
-				Http2Client.this.reconnectionPromise = future.channel()
-						.newPromise();
-			} else {
-				LOG.info(name + "-> Failed to connect.", future.cause());
-			}
-			
-		}
-		
-	}
+	// session
+	private int													maxSession			= 1;
+	private List<Channel>										sessionStore		= new CopyOnWriteArrayList<Channel>();
+	private AtomicInteger										sessionIdx			= new AtomicInteger(
+																							0);
+	private AtomicBoolean										stopped				= new AtomicBoolean(
+																							false);
 	
 	private class ApplicationProtocolNegotiationHandlerImpl extends
 			ApplicationProtocolNegotiationHandler {
@@ -207,8 +108,8 @@ class Http2Client<T extends PushNotification> {
 		protected void configurePipeline(final ChannelHandlerContext ctx,
 				final String protocol) {
 			if (ApplicationProtocolNames.HTTP_2.equals(protocol)) {
-				final Http2ClientHandlerBuilder<T> builder = new Http2ClientHandlerBuilder<T>();
-				final Http2ClientHandler<T> handler = builder
+				final Http2ClientHandlerBuilder builder = new Http2ClientHandlerBuilder();
+				final Http2ClientHandler handler = builder
 						.server(false)
 						.http2Client(Http2Client.this)
 						.authority(
@@ -231,19 +132,6 @@ class Http2Client<T extends PushNotification> {
 								TimeUnit.MILLISECONDS));
 				ctx.pipeline().addLast(handler);
 				
-				// start try success task
-				ctx.channel().eventLoop().submit(new Runnable() {
-					
-					@Override
-					public void run() {
-						final ChannelPromise connectionReadyPromise = Http2Client.this.connectionReadyPromise;
-						
-						if (connectionReadyPromise != null) {
-							connectionReadyPromise.trySuccess();
-						}
-					}
-				});
-				
 			} else {
 				LOG.error(name + "-> Unexpected protocol: {}", protocol);
 				ctx.close();
@@ -253,64 +141,18 @@ class Http2Client<T extends PushNotification> {
 		@Override
 		protected void handshakeFailure(final ChannelHandlerContext context,
 				final Throwable cause) throws Exception {
-			final ChannelPromise connectionReadyPromise = Http2Client.this.connectionReadyPromise;
-			
-			if (connectionReadyPromise != null) {
-				connectionReadyPromise.tryFailure(cause);
-			}
-			
+			//
 			super.handshakeFailure(context, cause);
 		}
 		
-	}
-	
-	public Http2Client(final File p12File, final String password)
-			throws IOException, KeyStoreException {
-		this(p12File, password, null);
-	}
-	
-	public Http2Client(final File p12File, final String password,
-			final EventLoopGroup eventLoopGroup) throws IOException,
-			KeyStoreException {
-		this(Http2Client.getSslContextWithP12File(p12File, password),
-				eventLoopGroup);
-		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
-			loadIdentifiers(loadKeyStore(p12InputStream, password));
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
+				throws Exception {
+			LOG.warn("{} Failed to select the application-level protocol:",
+					ctx.channel(), cause);
+			ctx.close();
 		}
-	}
-	
-	public Http2Client(KeyStore keyStore, final String password)
-			throws KeyStoreException, IOException {
-		this(keyStore, password, null);
-	}
-	
-	public Http2Client(final KeyStore keyStore, final String password,
-			final EventLoopGroup eventLoopGroup) throws KeyStoreException,
-			IOException {
-		this(Http2Client.getSslContextWithP12InputStream(keyStore, password),
-				eventLoopGroup);
-		loadIdentifiers(keyStore);
-		if (null != this.identities && !this.identities.isEmpty()) {
-			name = this.identities.get(0);
-		}
-	}
-	
-	public void abortConnection(ErrorResponse errorResponse)
-			throws Http2Exception {
-		disconnect();
-		throw new Http2Exception(Http2Error.CONNECT_ERROR,
-				errorResponse.getReason());
-	}
-	
-	private static KeyStore loadKeyStore(final InputStream p12InputStream,
-			final String password) throws KeyStoreException, IOException {
-		try {
-			return P12Util.loadPCKS12KeyStore(p12InputStream, password);
-		} catch (KeyStoreException e) {
-			throw e;
-		} catch (IOException e) {
-			throw e;
-		}
+		
 	}
 	
 	private void loadIdentifiers(KeyStore keyStore) throws KeyStoreException,
@@ -324,104 +166,95 @@ class Http2Client<T extends PushNotification> {
 		}
 	}
 	
-	public Http2Client(final X509Certificate certificate,
-			final PrivateKey privateKey, final String privateKeyPassword)
-			throws SSLException {
-		this(certificate, privateKey, privateKeyPassword, null);
+	private void verifyTopic(PushNotification notification) {
+		if (notification.getTopic() == null && this.identities != null
+				&& !this.identities.isEmpty()) {
+			notification.setTopic(this.identities.get(0));
+		}
+	}
+	
+	public Http2Client(final File p12File, final String password,
+			final APNsCallBack callback, final boolean sandboxEnvironment,
+			int maxSession) throws IOException, KeyStoreException {
+		this(p12File, password, null, callback, sandboxEnvironment, maxSession);
+	}
+	
+	public Http2Client(final File p12File, final String password,
+			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final boolean sandboxEnvironment, int maxSession)
+			throws IOException, KeyStoreException {
+		this(SslUtils.getSslContextWithP12File(p12File, password),
+				eventLoopGroup, callback, sandboxEnvironment, maxSession);
+		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
+			loadIdentifiers(SslUtils.loadKeyStore(p12InputStream, password));
+			if (null != this.identities && !this.identities.isEmpty()) {
+				name = this.identities.get(0);
+			}
+		}
+	}
+	
+	public Http2Client(KeyStore keyStore, final String password,
+			final APNsCallBack callback, final boolean sandboxEnvironment,
+			int maxSession) throws KeyStoreException, IOException {
+		this(keyStore, password, null, callback, sandboxEnvironment, maxSession);
+	}
+	
+	public Http2Client(final KeyStore keyStore, final String password,
+			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final boolean sandboxEnvironment, int maxSession)
+			throws KeyStoreException, IOException {
+		this(SslUtils.getSslContextWithP12InputStream(keyStore, password),
+				eventLoopGroup, callback, sandboxEnvironment, maxSession);
+		loadIdentifiers(keyStore);
+		if (null != this.identities && !this.identities.isEmpty()) {
+			name = this.identities.get(0);
+		}
+	}
+	
+	public void abortConnection(ErrorResponse errorResponse)
+			throws Http2Exception {
+		// disconnect();
+		throw new Http2Exception(Http2Error.CONNECT_ERROR,
+				errorResponse.getReason());
 	}
 	
 	public Http2Client(final X509Certificate certificate,
 			final PrivateKey privateKey, final String privateKeyPassword,
-			final EventLoopGroup eventLoopGroup) throws SSLException {
-		this(Http2Client.getSslContextWithCertificateAndPrivateKey(certificate,
-				privateKey, privateKeyPassword), eventLoopGroup);
+			final APNsCallBack callback, boolean sandboxEnvironment,
+			int maxSession) throws SSLException {
+		this(certificate, privateKey, privateKeyPassword, null, callback,
+				sandboxEnvironment, maxSession);
 	}
 	
-	private static SslContext getSslContextWithP12File(final File p12File,
-			final String password) throws IOException, KeyStoreException {
-		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
-			return Http2Client.getSslContextWithP12InputStream(
-					loadKeyStore(p12InputStream, password), password);
-		}
+	public Http2Client(final X509Certificate certificate,
+			final PrivateKey privateKey, final String privateKeyPassword,
+			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final boolean sandboxEnvironment, int maxSession)
+			throws SSLException {
+		this(SslUtils.getSslContextWithCertificateAndPrivateKey(certificate,
+				privateKey, privateKeyPassword), eventLoopGroup, callback,
+				sandboxEnvironment, maxSession);
 	}
 	
-	private static SslContext getSslContextWithP12InputStream(
-			final KeyStore keyStore, final String password) throws SSLException {
-		final X509Certificate x509Certificate;
-		final PrivateKey privateKey;
-		
-		try {
-			final PrivateKeyEntry privateKeyEntry = P12Util
-					.getFirstPrivateKeyEntryFromP12InputStream(keyStore,
-							password);
-			
-			final Certificate certificate = privateKeyEntry.getCertificate();
-			
-			if (!(certificate instanceof X509Certificate)) {
-				throw new KeyStoreException(
-						name
-								+ "-> Found a certificate in the provided PKCS#12 file, but it was not an X.509 certificate.");
-			}
-			
-			x509Certificate = (X509Certificate) certificate;
-			privateKey = privateKeyEntry.getPrivateKey();
-		} catch (final KeyStoreException e) {
-			throw new SSLException(e);
-		} catch (final IOException e) {
-			throw new SSLException(e);
-		}
-		
-		return Http2Client.getSslContextWithCertificateAndPrivateKey(
-				x509Certificate, privateKey, password);
-	}
-	
-	private static SslContext getSslContextWithCertificateAndPrivateKey(
-			final X509Certificate certificate, final PrivateKey privateKey,
-			final String privateKeyPassword) throws SSLException {
-		return Http2Client.getBaseSslContextBuilder()
-				.keyManager(privateKey, privateKeyPassword, certificate)
-				.build();
-	}
-	
-	private static SslContextBuilder getBaseSslContextBuilder() {
-		final SslProvider sslProvider;
-		
-		if (OpenSsl.isAvailable()) {
-			if (OpenSsl.isAlpnSupported()) {
-				sslProvider = SslProvider.OPENSSL;
-			} else {
-				sslProvider = SslProvider.JDK;
-			}
+	protected Http2Client(final SslContext sslCtx, final EventLoopGroup group,
+			final APNsCallBack callback, final boolean sandboxEnvironment,
+			int maxSession) {
+		this.callback = callback;
+		this.maxSession = maxSession;
+		if (sandboxEnvironment) {
+			this.host = HttpProperties.DEVELOPMENT_APNS_HOST;
+			this.port = HttpProperties.DEFAULT_APNS_PORT;
 		} else {
-			sslProvider = SslProvider.JDK;
+			this.host = HttpProperties.PRODUCTION_APNS_HOST;
+			this.port = HttpProperties.DEFAULT_APNS_PORT;
 		}
-		SslContextBuilder builder = SslContextBuilder
-				.forClient()
-				.sslProvider(sslProvider)
-				.ciphers(Http2SecurityUtil.CIPHERS,
-						SupportedCipherSuiteFilter.INSTANCE)
-				.applicationProtocolConfig(
-						new ApplicationProtocolConfig(Protocol.ALPN,
-								SelectorFailureBehavior.NO_ADVERTISE,
-								SelectedListenerFailureBehavior.ACCEPT,
-								ApplicationProtocolNames.HTTP_2));
-		return builder;
-	}
-	
-	protected Http2Client(final SslContext sslCtx, final EventLoopGroup group) {
+		
 		this.bootstrap = new Bootstrap();
 		
-		if (group != null) {
-			this.bootstrap.group(group);
-			this.shouldShutDownEventLoopGroup = false;
-		} else {
-			this.bootstrap.group(new NioEventLoopGroup(1,
-					new DefaultThreadFactory("HTTP2APNs")));
-			this.shouldShutDownEventLoopGroup = true;
-		}
+		this.bootstrap.group(new NioEventLoopGroup(1, new DefaultThreadFactory(
+				"HTTP2APNs")));
 		
-		this.bootstrap.channel(this.getSocketChannelClass(this.bootstrap
-				.config().group()));
+		this.bootstrap.channel(NioSocketChannel.class);
 		this.bootstrap.option(ChannelOption.TCP_NODELAY, true);
 		this.bootstrap.handler(new ChannelInitializer<SocketChannel>() {
 			
@@ -439,10 +272,12 @@ class Http2Client<T extends PushNotification> {
 					pipeline.addFirst(factory.createProxyHandler());
 				}
 				
-				if (HttpProperties.DEFAULT_WRITE_TIMEOUT_MILLIS > 0)
+				// 20s 写空闲就开始发送ping-pong心跳到服务端
+				if (HttpProperties.DEFAULT_WRITE_TIMEOUT_MILLIS > 0) {
 					pipeline.addLast(new WriteTimeoutHandler(
 							HttpProperties.DEFAULT_WRITE_TIMEOUT_MILLIS,
 							TimeUnit.MILLISECONDS));
+				}
 				
 				pipeline.addLast(sslCtx.newHandler(channel.alloc()));
 				pipeline.addLast(new ApplicationProtocolNegotiationHandlerImpl(
@@ -453,38 +288,94 @@ class Http2Client<T extends PushNotification> {
 		});
 	}
 	
-	private Class<? extends Channel> getSocketChannelClass(
-			final EventLoopGroup eventLoopGroup) {
-		if (eventLoopGroup == null) {
-			LOG.warn(name
-					+ "-> Asked for socket channel class to work with null event loop group, returning NioSocketChannel class.");
-			return NioSocketChannel.class;
-		}
-		
-		if (eventLoopGroup instanceof NioEventLoopGroup) {
-			return NioSocketChannel.class;
-		} else if (eventLoopGroup instanceof OioEventLoopGroup) {
-			return OioSocketChannel.class;
-		}
-		final String className = eventLoopGroup.getClass().getName();
-		if (EPOLL_EVENT_LOOP_GROUP_CLASS.equals(className)) {
-			return this.loadSocketChannelClass(EPOLL_SOCKET_CHANNEL_CLASS);
-		}
-		
-		throw new IllegalArgumentException(
-				name
-						+ "-> Don't know which socket channel class to return for event loop group "
-						+ className);
+	public final synchronized void start() {
+		exec.submit(new Runnable() {
+			
+			@Override
+			public void run() {
+				doConnect();
+			}
+			
+		});
 	}
 	
-	private Class<? extends Channel> loadSocketChannelClass(
-			final String className) {
+	public final synchronized void stop() {
+		if (null != exec) {
+			exec.shutdown();
+		}
+	}
+	
+	private void doScheduleNextConnect() {
+		if (null == lunchConnectFuture || lunchConnectFuture.isDone()) {
+			lunchConnectFuture = exec.schedule(new Runnable() {
+				
+				@Override
+				public void run() {
+					doConnect();
+				}
+			}, reconnectTimeout, TimeUnit.SECONDS);
+			
+			LOG.trace("doScheduleNextConnect: next connect scheduled.");
+		} else {
+			LOG.trace("doScheduleNextConnect: next connect !NOT! scheduled.");
+		}
+	}
+	
+	private void doConnect() {
+		exec.submit(new Runnable() {
+			
+			@Override
+			public void run() {
+				doScheduleNextConnect();
+			}
+			
+		});
+		
+		// check session full
+		if (sessionStore.size() >= maxSession) {
+			LOG.trace("doConnect: reach max session: {}, cancel this action.",
+					maxSession);
+			return;
+		}
+		
 		try {
-			final Class<?> clazz = Class.forName(className);
-			LOG.debug("Loaded socket channel class: {}", clazz);
-			return clazz.asSubclass(Channel.class);
-		} catch (final ClassNotFoundException e) {
-			throw new IllegalArgumentException(e.getMessage(), e);
+			ChannelFuture future = bootstrap.connect(host, port).sync();
+			future.addListener(new GenericFutureListener<ChannelFuture>() {
+				
+				@Override
+				public void operationComplete(final ChannelFuture future)
+						throws Exception {
+					if (future.isSuccess()) {
+						exec.submit(new Runnable() {
+							
+							@Override
+							public void run() {
+								onConnectComplete(future);
+							}
+						});
+					} else {
+						LOG.warn("APNs not connected. begin reconnect ...");
+					}
+				}
+				
+			});
+			
+			return;
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	private final void onConnectComplete(final ChannelFuture future) {
+		if (future.channel().isActive()) {
+			final Channel channel = future.channel();
+			LOG.info("onConnectComplete: session {} connected.", channel);
+			
+			// add channel to session pool.
+			sessionStore.add(channel);
+			
+		} else {
+			LOG.error("onConnectComplete: connect failed.");
 		}
 	}
 	
@@ -502,240 +393,94 @@ class Http2Client<T extends PushNotification> {
 		}
 	}
 	
-	public Future<Void> connect(final String host) {
-		return this.connect(host, HttpProperties.DEFAULT_APNS_PORT);
-	}
-	
-	public Future<Void> connectSandBox() {
-		return this.connect(HttpProperties.DEVELOPMENT_APNS_HOST,
-				HttpProperties.DEFAULT_APNS_PORT);
-	}
-	
-	public Future<Void> connectProduction() {
-		return this.connect(HttpProperties.PRODUCTION_APNS_HOST,
-				HttpProperties.DEFAULT_APNS_PORT);
-	}
-	
-	private Future<Void> connect(final String host, final int port) {
-		final Future<Void> connectionReadyFuture;
-		
-		if (this.bootstrap.config().group().isShuttingDown()
-				|| this.bootstrap.config().group().isShutdown()) {
-			connectionReadyFuture = new FailedFuture<Void>(
-					GlobalEventExecutor.INSTANCE,
-					new IllegalStateException(
-							name
-									+ "-> Client's event loop group has been shutdown and cannot be restarted."));
-			return connectionReadyFuture;
-		}
-		
-		synchronized (this.bootstrap) {
-			//
-			this.connectionReadyPromise = null;
-			final ChannelFuture connectFuture = this.bootstrap.connect(host,
-					port);
-			this.connectionReadyPromise = connectFuture.channel().newPromise();
-			
-			connectFuture.channel().closeFuture()
-					.addListener(new CloseFutureListener(host, port));
-			
-			this.connectionReadyPromise
-					.addListener(new ConnectFutureListener());
-			
-			connectionReadyFuture = this.connectionReadyPromise;
-		}
-		
-		return connectionReadyFuture;
-	}
-	
-	public boolean isConnected() {
-		final ChannelPromise connectionReadyPromise = this.connectionReadyPromise;
-		return (connectionReadyPromise != null && connectionReadyPromise
-				.isSuccess());
-	}
-	
-	void waitForInitialSettings() throws InterruptedException {
-		this.connectionReadyPromise.channel().pipeline()
-				.get(Http2ClientHandler.class).waitForInitialSettings();
-	}
-	
-	public Future<Void> getReconnectionFuture() {
-		final Future<Void> reconnectionFuture;
-		
-		synchronized (this.bootstrap) {
-			if (this.isConnected()) {
-				reconnectionFuture = this.connectionReadyPromise.channel()
-						.newSucceededFuture();
-			} else if (this.reconnectionPromise != null) {
-				reconnectionFuture = this.reconnectionPromise;
-			} else {
-				reconnectionFuture = new FailedFuture<Void>(
-						GlobalEventExecutor.INSTANCE,
-						new IllegalStateException(name
-								+ "-> Client was not previously connected."));
+	public Channel next() {
+		while (0 == sessionStore.size() && !this.stopped.get()) {
+			try {
+				Thread.sleep(1 * 1000);
+			} catch (InterruptedException e) {
+				LOG.error("send exception:", e);
 			}
 		}
 		
-		return reconnectionFuture;
+		if (this.stopped.get()) {
+			return null;
+		}
+		
+		if (sessionStore.size() == 0) {
+			return sessionStore.get(0);
+		}
+		
+		int idx = sessionIdx.getAndIncrement();
+		if (idx >= sessionStore.size()) {
+			idx = 0;
+			sessionIdx.set(idx);
+		}
+		
+		return sessionStore.get(idx);
 	}
 	
-	public Future<PushResponse<T>> sendNotification(final T notification) {
-		final Future<PushResponse<T>> respFuture;
-		final long notificationId = this.nextNotificationId.getAndIncrement();
+	public void sendNotification(final PushNotification notification) {
+		// final long notificationId = this.nextId.getAndIncrement();
 		
 		verifyTopic(notification);
 		
-		final ChannelPromise readyPromise = this.connectionReadyPromise;
+		final Channel channel = next();
 		
-		if (readyPromise != null && readyPromise.isSuccess()
-				&& readyPromise.channel().isActive()) {
-			final DefaultPromise<PushResponse<T>> promise = new DefaultPromise<PushResponse<T>>(
-					readyPromise.channel().eventLoop());
+		if (channel != null && channel.isActive() && channel.isWritable()) {
+			final DefaultPromise<PushResponse> promise = new DefaultPromise<PushResponse>(
+					channel.eventLoop());
 			
-			readyPromise.channel().eventLoop().submit(new Runnable() {
+			// filter notification already request
+			if (Http2Client.this.responsePromises.containsKey(notification)) {
+				String fmt = name
+						+ "-> The given notification has already been sent and not yet resolved.";
+				promise.setFailure(new IllegalStateException(fmt));
+			} else {
+				Http2Client.this.responsePromises.put(notification, promise);
+			}
+			
+			// write notification
+			ChannelFuture writeFuture = channel.write(notification);
+			writeFuture.addListener(new GenericFutureListener<ChannelFuture>() {
 				
 				@Override
-				public void run() {
-					if (Http2Client.this.responsePromises
-							.containsKey(notification)) {
-						promise.setFailure(new IllegalStateException(
-								name
-										+ "-> The given notification has already been sent and not yet resolved."));
+				public void operationComplete(final ChannelFuture future)
+						throws Exception {
+					if (!future.isSuccess()) {
+						LOG.debug("[{}] Failed to write notification: {}",
+								name, notification, future.cause());
+						
+						Http2Client.this.responsePromises.remove(notification);
+						promise.tryFailure(future.cause());
 					} else {
-						Http2Client.this.responsePromises.put(notification,
-								promise);
+						LOG.info("Successed to write push notification: {}",
+								notification);
 					}
 				}
 			});
 			
-			readyPromise.channel().write(notification)
-					.addListener(new GenericFutureListener<ChannelFuture>() {
-						
-						@Override
-						public void operationComplete(final ChannelFuture future)
-								throws Exception {
-							if (!future.isSuccess()) {
-								LOG.debug(
-										name
-												+ "-> Failed to write push notification: {}",
-										notification, future.cause());
-								
-								Http2Client.this.responsePromises
-										.remove(notification);
-								promise.tryFailure(future.cause());
-							}
-						}
-					});
-			
-			respFuture = promise;
 		} else {
-			
 			// TODO send failed to processed
 			LOG.error(
-					name
-							+ "-> Failed to send push notification because client is not connected: {}",
-					notification);
-			respFuture = new FailedFuture<PushResponse<T>>(
-					GlobalEventExecutor.INSTANCE, NOT_CONNECTED_EXCEPTION);
+					"[{}] Failed to send push notification because client is not connected: {}",
+					name, notification);
 		}
 		
-		respFuture
-				.addListener(new GenericFutureListener<Future<PushResponse<T>>>() {
-					
-					@Override
-					public void operationComplete(
-							final Future<PushResponse<T>> future)
-							throws Exception {
-						if (future.isSuccess()) {
-							final PushResponse<T> response = future.getNow();
-						}
-					}
-				});
-		
-		return respFuture;
+		return;
 	}
 	
-	private void verifyTopic(T notification) {
-		if (notification.getTopic() == null && this.identities != null
-				&& !this.identities.isEmpty()) {
-			notification.setTopic(this.identities.get(0));
-		}
-	}
-	
-	protected void handlePushNotificationResponse(final PushResponse<T> response) {
+	void handleNotificationResponse(final PushResponse response) {
 		LOG.debug("Received response from APNs gateway: {}", response);
-		if (response.getPushNotification() != null) {
-			this.responsePromises.remove(response.getPushNotification())
+		if (response.getNotification() != null) {
+			this.responsePromises.remove(response.getNotification())
 					.setSuccess(response);
 		} else {
 			this.responsePromises.clear();
 		}
-	}
-	
-	public void setGracefulShutdownTimeout(final long timeoutMillis) {
-		synchronized (this.bootstrap) {
-			this.gracefulShutdownTimeoutMillis = timeoutMillis;
-			
-			if (this.connectionReadyPromise != null) {
-				final Http2ClientHandler<?> handler = this.connectionReadyPromise
-						.channel().pipeline().get(Http2ClientHandler.class);
-				
-				if (handler != null) {
-					handler.gracefulShutdownTimeoutMillis(timeoutMillis);
-				}
-			}
+		
+		if (null != this.callback) {
+			this.callback.response(response);
 		}
 	}
 	
-	// disconnect
-	public Future<Void> disconnect() {
-		LOG.info("Disconnecting.");
-		final Future<Void> disconnectFuture;
-		
-		synchronized (this.bootstrap) {
-			this.reconnectionPromise = null;
-			
-			final Future<Void> channelCloseFuture;
-			
-			if (this.connectionReadyPromise != null) {
-				channelCloseFuture = this.connectionReadyPromise.channel()
-						.close();
-			} else {
-				channelCloseFuture = new SucceededFuture<Void>(
-						GlobalEventExecutor.INSTANCE, null);
-			}
-			
-			if (this.shouldShutDownEventLoopGroup) {
-				channelCloseFuture
-						.addListener(new GenericFutureListener<Future<Void>>() {
-							
-							@Override
-							public void operationComplete(
-									final Future<Void> future) throws Exception {
-								Http2Client.this.bootstrap.config().group()
-										.shutdownGracefully();
-							}
-						});
-				
-				disconnectFuture = new DefaultPromise<Void>(
-						GlobalEventExecutor.INSTANCE);
-				
-				this.bootstrap.config().group().terminationFuture()
-						.addListener(new GenericFutureListener() {
-							
-							@Override
-							public void operationComplete(final Future future)
-									throws Exception {
-								assert disconnectFuture instanceof DefaultPromise;
-								((DefaultPromise<Void>) disconnectFuture)
-										.trySuccess(null);
-							}
-						});
-			} else {
-				disconnectFuture = channelCloseFuture;
-			}
-		}
-		
-		return disconnectFuture;
-	}
 }

@@ -131,7 +131,7 @@ public class DefaultPushNotification implements PushNotification {
 	@Override
 	public String toString() {
 		final StringBuilder builder = new StringBuilder();
-		builder.append("ZupHttpPushNotification [token=");
+		builder.append("DefaultNotification [token=");
 		builder.append(this.token);
 		builder.append(", payload=");
 		builder.append(this.payload);

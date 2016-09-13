@@ -5,16 +5,14 @@
  */
 package com.test;
 
-import io.netty.util.concurrent.Future;
-
 import java.io.File;
 import java.util.concurrent.ExecutionException;
 
 import javax.net.ssl.SSLException;
 
-import br.com.zup.push.client.APNsClient;
+import br.com.zup.push.APNsClient;
 import br.com.zup.push.client.CertificateNotValidException;
-import br.com.zup.push.data.PushNotification;
+import br.com.zup.push.data.APNsCallBack;
 import br.com.zup.push.data.PushResponse;
 import br.com.zup.push.notification.Notification;
 
@@ -30,17 +28,26 @@ public class Test {
 			ExecutionException, CertificateNotValidException,
 			InterruptedException {
 		// com.hikvision.videogo-12
-		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\ezviz_12.p12";
+		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\videogo_12_distribution.p12";
 		File certificateFile = new File(filePath);
-		APNsClient client = new APNsClient(certificateFile, "hikvision");
-		client.productionMode();
-		// client.sandboxMode();
+		APNsClient client = new APNsClient(certificateFile, "",
+				new APNsCallBack() {
+					
+					@Override
+					public void response(PushResponse resp) {
+						// 异步回调
+						System.out.println(resp);
+					}
+					
+				}, false, 1);
 		
-		//
+		client.start();
+		
+		// 94b8e0dcfc406b62f3c87b5701d0c8d1af98a70319c825e8d04bc1cc7d9053c3
 		// zhaohaolin iphone
 		// 1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7
 		Notification n = new Notification.Builder(
-				"94b8e0dcfc406b62f3c87b5701d0c8d1af98a70319c825e8d04bc1cc7d9053c3")
+				"1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7")
 				// .alertTitle("我是测试的标题")
 				// .alertBody(
 				// "d83dde04 我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
@@ -61,12 +68,9 @@ public class Test {
 		
 		// async
 		{
-			for (int i = 0; i < 1; i++) {
-				Future<PushResponse<PushNotification>> future = client
-						.pushMessageAsync(n.getPayload(), n.getToken());
+			for (int i = 0; i < 10; i++) {
 				try {
-					PushResponse<PushNotification> resp = future.get();
-					System.out.println(resp.getRejectionReason());
+					client.send(n.getPayload(), n.getToken());
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 				}
