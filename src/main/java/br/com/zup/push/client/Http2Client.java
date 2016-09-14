@@ -380,10 +380,6 @@ public class Http2Client {
 		if (future.channel().isActive()) {
 			final Channel channel = future.channel();
 			LOG.info("onConnectComplete: session {} connected.", channel);
-			
-			// add channel to session pool.
-			// sessionStore.add(channel);
-			
 		} else {
 			LOG.error("onConnectComplete: connect failed.");
 		}

@@ -24,42 +24,31 @@ import br.com.zup.push.notification.Notification;
  */
 public class Test {
 	
+	static class HTTP2APNsCallBack implements APNsCallBack {
+		@Override
+		public void response(PushResponse resp) {
+			// 异步回调
+			System.out.println(resp);
+		}
+	}
+	
 	public static void main(String[] args) throws SSLException,
 			ExecutionException, CertificateNotValidException,
 			InterruptedException {
+		
 		// com.hikvision.videogo-12
-		String filePath = "/Users/zhaohaolin/git/apns-http2/src/test/java/distribution.p12";
+		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\distribution.p12";
 		File certificateFile = new File(filePath);
 		APNsClient client = new APNsClient(certificateFile, "hikvision",
-				new APNsCallBack() {
-					
-					@Override
-					public void response(PushResponse resp) {
-						// 异步回调
-						System.out.println(resp);
-					}
-					
-				}, false, 1);
+				new HTTP2APNsCallBack(), false, 4);
 		
 		client.start();
 		
-		//Thread.sleep(1000);
+		// Thread.sleep(1000);
 		
 		// 94b8e0dcfc406b62f3c87b5701d0c8d1af98a70319c825e8d04bc1cc7d9053c3
 		// zhaohaolin iphone
 		// 1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7
-		Notification n = new Notification.Builder(
-				"1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7")
-				// .alertTitle("我是测试的标题")
-				// .alertBody(
-				// "d83dde04 我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
-				.alert("我是测试内容")
-				.badge(22)
-				.sound("default.caf")
-				.customField(
-						"ext",
-						"1,2016-07-28 16:55:14,0,1,10000, shipin7://rtsp://183.136.184.7:8554/demo://580145213:2:1:1:0:cas.ys7.com:65000&subserial=580145213&channelno=2&squareid=881880,,,,0")
-				.build();
 		
 		// sync
 		{
@@ -70,8 +59,20 @@ public class Test {
 		
 		// async
 		{
-			for (int i = 0; i < 1; i++) {
+			for (int i = 0; i < 10; i++) {
 				try {
+					Notification n = new Notification.Builder(
+							"1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7")
+							// .alertTitle("我是测试的标题")
+							// .alertBody(
+							// "d83dde04 我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
+							.alert("我是测试内容 i="+i)
+							//.badge(22)
+							.sound("default.caf")
+							.customField(
+									"ext",
+									"1,2016-07-28 16:55:14,0,1,10000, shipin7://rtsp://183.136.184.7:8554/demo://580145213:2:1:1:0:cas.ys7.com:65000&subserial=580145213&channelno=2&squareid=881880,,,,0")
+							.build();
 					client.send(n.getPayload(), n.getToken());
 				} catch (InterruptedException e) {
 					e.printStackTrace();
