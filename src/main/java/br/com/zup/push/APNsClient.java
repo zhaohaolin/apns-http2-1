@@ -46,9 +46,11 @@ public class APNsClient {
 			throw e;
 		} catch (KeyStoreException e) {
 			// e.printStackTrace();
+			LOG.error("", e);
 			throw e;
 		} catch (IOException e) {
 			// e.printStackTrace();
+			LOG.error("", e);
 			throw e;
 		}
 	}
@@ -64,6 +66,7 @@ public class APNsClient {
 	/**
 	 * Partially async, as it still need connection wait if doestn have
 	 * connected before
+	 * 
 	 * @param message
 	 * @param token
 	 * @return

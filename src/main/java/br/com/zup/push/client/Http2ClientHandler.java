@@ -81,7 +81,7 @@ class Http2ClientHandler extends Http2ConnectionHandler {
 	private static final Logger						LOG								= LoggerFactory
 																							.getLogger(Http2ClientHandler.class);
 	
-	protected class ApnsClientHandlerFrameAdapter extends Http2FrameAdapter {
+	class APNsClientHandlerFrameAdapter extends Http2FrameAdapter {
 		
 		@Override
 		public void onSettingsRead(final ChannelHandlerContext ctx,
@@ -93,6 +93,9 @@ class Http2ClientHandler extends Http2ConnectionHandler {
 				Http2ClientHandler.this.receivedInitialSettings.set(true);
 				Http2ClientHandler.this.receivedInitialSettings.notifyAll();
 			}
+			
+			// add channel to http2Client
+			http2Client.addChannel(ctx.channel());
 		}
 		
 		@Override
@@ -196,12 +199,11 @@ class Http2ClientHandler extends Http2ConnectionHandler {
 	
 	protected Http2ClientHandler(final Http2ConnectionDecoder decoder,
 			final Http2ConnectionEncoder encoder,
-			final Http2Settings initialSettings,
-			final Http2Client pushHttpClient, final String authority,
-			final int maxUnflushedNotifications) {
+			final Http2Settings initialSettings, final Http2Client httpClient,
+			final String authority, final int maxUnflushedNotifications) {
 		super(decoder, encoder, initialSettings);
 		
-		this.http2Client = pushHttpClient;
+		this.http2Client = httpClient;
 		this.authority = authority;
 		this.maxUnflushedNotifications = maxUnflushedNotifications;
 	}
@@ -314,36 +316,7 @@ class Http2ClientHandler extends Http2ConnectionHandler {
 				
 				this.encoder()
 						.writePing(ctx, false, pingDataBuffer, ctx.newPromise())
-						.addListener(
-								new GenericFutureListener<ChannelFuture>() {
-									
-									@Override
-									public void operationComplete(
-											final ChannelFuture future)
-											throws Exception {
-										if (future.isSuccess()) {
-											Http2ClientHandler.this.pingTimeoutFuture = future
-													.channel().eventLoop()
-													.schedule(
-															new Runnable() {
-																
-																@Override
-																public void run() {
-																	LOG.debug("Closing channel due to ping timeout.");
-																	future.channel()
-																			.close();
-																}
-															},
-															PING_TIMEOUT_SECONDS,
-															TimeUnit.SECONDS);
-										} else {
-											LOG.debug(
-													"Failed to write PING frame.",
-													future.cause());
-											future.channel().close();
-										}
-									}
-								});
+						.addListener(new PingFutureListener());
 				
 				this.flush(ctx);
 			}
@@ -369,5 +342,30 @@ class Http2ClientHandler extends Http2ConnectionHandler {
 				this.receivedInitialSettings.wait();
 			}
 		}
+	}
+	
+	// ping future listener
+	class PingFutureListener implements GenericFutureListener<ChannelFuture> {
+		
+		@Override
+		public void operationComplete(final ChannelFuture future)
+				throws Exception {
+			if (future.isSuccess()) {
+				Http2ClientHandler.this.pingTimeoutFuture = future.channel()
+						.eventLoop().schedule(new Runnable() {
+							
+							@Override
+							public void run() {
+								LOG.debug("Closing channel due to ping timeout.");
+								future.channel().close();
+							}
+							
+						}, PING_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			} else {
+				LOG.debug("Failed to write PING frame.", future.cause());
+				future.channel().close();
+			}
+		}
+		
 	}
 }

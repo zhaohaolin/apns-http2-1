@@ -95,12 +95,18 @@ public class Http2Client {
 																							0);
 	private AtomicBoolean										stopped				= new AtomicBoolean(
 																							false);
+	private int													threads				= Runtime
+																							.getRuntime()
+																							.availableProcessors() * 2;
+	private EventLoopGroup										group				= new NioEventLoopGroup(
+																							threads,
+																							new DefaultThreadFactory(
+																									"HTTP2APNs"));
 	
-	private class ApplicationProtocolNegotiationHandlerImpl extends
+	private class ProtocolNegotiationHandlerImpl extends
 			ApplicationProtocolNegotiationHandler {
 		
-		protected ApplicationProtocolNegotiationHandlerImpl(
-				String fallbackProtocol) {
+		protected ProtocolNegotiationHandlerImpl(String fallbackProtocol) {
 			super(fallbackProtocol);
 		}
 		
@@ -251,8 +257,11 @@ public class Http2Client {
 		
 		this.bootstrap = new Bootstrap();
 		
-		this.bootstrap.group(new NioEventLoopGroup(1, new DefaultThreadFactory(
-				"HTTP2APNs")));
+		if (null != group) {
+			this.bootstrap.group(group);
+		} else {
+			this.bootstrap.group(this.group);
+		}
 		
 		this.bootstrap.channel(NioSocketChannel.class);
 		this.bootstrap.option(ChannelOption.TCP_NODELAY, true);
@@ -280,11 +289,12 @@ public class Http2Client {
 				}
 				
 				pipeline.addLast(sslCtx.newHandler(channel.alloc()));
-				pipeline.addLast(new ApplicationProtocolNegotiationHandlerImpl(
-						""));
+				pipeline.addLast(new ProtocolNegotiationHandlerImpl(
+						ApplicationProtocolNames.HTTP_2));
 				
 				// the application layer
 			}
+			
 		});
 	}
 	
@@ -372,11 +382,16 @@ public class Http2Client {
 			LOG.info("onConnectComplete: session {} connected.", channel);
 			
 			// add channel to session pool.
-			sessionStore.add(channel);
+			// sessionStore.add(channel);
 			
 		} else {
 			LOG.error("onConnectComplete: connect failed.");
 		}
+	}
+	
+	public final void addChannel(final Channel channel) {
+		sessionStore.add(channel);
+		LOG.info("add channel=[{}] into sessionStore.", channel);
 	}
 	
 	public void setProxyHandlerFactory(final ProxyHandlerFactory factory) {
@@ -440,7 +455,7 @@ public class Http2Client {
 			}
 			
 			// write notification
-			ChannelFuture writeFuture = channel.write(notification);
+			ChannelFuture writeFuture = channel.writeAndFlush(notification);
 			writeFuture.addListener(new GenericFutureListener<ChannelFuture>() {
 				
 				@Override
@@ -452,6 +467,7 @@ public class Http2Client {
 						
 						Http2Client.this.responsePromises.remove(notification);
 						promise.tryFailure(future.cause());
+						// TODO callback failure
 					} else {
 						LOG.info("Successed to write push notification: {}",
 								notification);

@@ -76,7 +76,7 @@ public class Http2ClientHandlerBuilder
 		final Http2ClientHandler handler = new Http2ClientHandler(decoder,
 				encoder, initialSettings, this.http2Client(), this.authority(),
 				this.maxUnflushedNotifications());
-		this.frameListener(handler.new ApnsClientHandlerFrameAdapter());
+		this.frameListener(handler.new APNsClientHandlerFrameAdapter());
 		return handler;
 	}
 	
