@@ -1,5 +1,6 @@
 package br.com.zup.push;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,23 +25,22 @@ public class APNsClient {
 	private final Http2Client	http2Client;
 	
 	public APNsClient(final File certificateFile, final String password,
-			final APNsCallBack callback, boolean sandboxEnvironment,
-			int maxSession) throws SSLException {
+			boolean sandboxEnvironment, int maxSession) throws SSLException {
 		try {
 			this.http2Client = new Http2Client(certificateFile, password,
-					callback, sandboxEnvironment, maxSession);
+					sandboxEnvironment, maxSession);
 		} catch (IOException | KeyStoreException e) {
 			throw new SSLException(e);
 		}
 	}
 	
 	public APNsClient(final InputStream p12InputStream, final String password,
-			final APNsCallBack callback, boolean sandboxEnvironment,
-			int maxSession) throws KeyStoreException, IOException {
+			boolean sandboxEnvironment, int maxSession)
+			throws KeyStoreException, IOException {
 		try {
 			KeyStore keyStore = P12Util.loadPCKS12KeyStore(p12InputStream,
 					password);
-			this.http2Client = new Http2Client(keyStore, password, callback,
+			this.http2Client = new Http2Client(keyStore, password,
 					sandboxEnvironment, maxSession);
 		} catch (SSLException e) {
 			throw e;
@@ -52,6 +52,37 @@ public class APNsClient {
 			// e.printStackTrace();
 			LOG.error("", e);
 			throw e;
+		}
+	}
+	
+	public APNsClient(final byte[] certificate, final String password,
+			boolean sandboxEnvironment, int maxSession)
+			throws KeyStoreException, IOException {
+		final InputStream p12is = new ByteArrayInputStream(certificate);
+		try {
+			try {
+				KeyStore keyStore = P12Util.loadPCKS12KeyStore(p12is, password);
+				this.http2Client = new Http2Client(keyStore, password,
+						sandboxEnvironment, maxSession);
+			} catch (SSLException e) {
+				throw e;
+			} catch (KeyStoreException e) {
+				// e.printStackTrace();
+				LOG.error("", e);
+				throw e;
+			} catch (IOException e) {
+				// e.printStackTrace();
+				LOG.error("", e);
+				throw e;
+			}
+		} finally {
+			try {
+				if (null != p12is) {
+					p12is.close();
+				}
+			} catch (IOException e) {
+				LOG.warn("证书加载异常:", e);
+			}
 		}
 	}
 	
@@ -73,12 +104,13 @@ public class APNsClient {
 	 * @throws ExecutionException
 	 * @throws InterruptedException
 	 */
-	public void send(final String message, final String token)
-			throws ExecutionException, InterruptedException {
+	public void send(final String token, final String message,
+			final APNsCallBack callback) throws ExecutionException,
+			InterruptedException {
 		
 		final DefaultPushNotification notify = new DefaultPushNotification(
 				token, null, message);
-		this.http2Client.sendNotification(notify);
+		this.http2Client.sendNotification(notify, callback);
 		return;
 	}
 	

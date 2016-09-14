@@ -23,10 +23,8 @@ import io.netty.handler.timeout.WriteTimeoutHandler;
 import io.netty.resolver.AddressResolverGroup;
 import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NoopAddressResolverGroup;
-import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.GenericFutureListener;
-import io.netty.util.concurrent.Promise;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -55,6 +53,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import br.com.zup.push.data.APNsCallBack;
+import br.com.zup.push.data.DefaultPushResponse;
 import br.com.zup.push.data.PushNotification;
 import br.com.zup.push.data.PushResponse;
 import br.com.zup.push.proxy.ProxyHandlerFactory;
@@ -63,45 +62,44 @@ import br.com.zup.push.util.P12Util;
 public class Http2Client {
 	
 	// private static:
-	private static final ScheduledExecutorService				exec				= Executors
-																							.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
-																									"APNsSession"));
-	private static final Logger									LOG					= LoggerFactory
-																							.getLogger(Http2Client.class);
+	private static final ScheduledExecutorService		exec				= Executors
+																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
+																							"APNsSession"));
+	private static final Logger							LOG					= LoggerFactory
+																					.getLogger(Http2Client.class);
 	
 	// private final:
-	private final Bootstrap										bootstrap;
-	private final Map<PushNotification, Promise<PushResponse>>	responsePromises	= new IdentityHashMap<PushNotification, Promise<PushResponse>>();
-	private final APNsCallBack									callback;
+	private final Bootstrap								bootstrap;
+	private final Map<PushNotification, APNsCallBack>	responsePromises	= new IdentityHashMap<PushNotification, APNsCallBack>();
 	
 	// private volatile：
-	private volatile ProxyHandlerFactory						proxyHandlerFactory;
+	private volatile ProxyHandlerFactory				proxyHandlerFactory;
 	
-	private volatile ScheduledFuture<?>							lunchConnectFuture;
+	private volatile ScheduledFuture<?>					lunchConnectFuture;
 	
 	// private:
-	private Long												gracefulShutdownTimeoutMillis;
-	private ArrayList<String>									identities;
-	private String												name				= "";
-	private long												reconnectTimeout	= HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
+	private Long										gracefulShutdownTimeoutMillis;
+	private ArrayList<String>							identities;
+	private String										name				= "";
+	private long										reconnectTimeout	= HttpProperties.INITIAL_RECONNECT_DELAY_SECONDS;
 	
-	private String												host				= HttpProperties.PRODUCTION_APNS_HOST;
-	private int													port				= 443;
+	private String										host				= HttpProperties.PRODUCTION_APNS_HOST;
+	private int											port				= 443;
 	
 	// session
-	private int													maxSession			= 1;
-	private List<Channel>										sessionStore		= new CopyOnWriteArrayList<Channel>();
-	private AtomicInteger										sessionIdx			= new AtomicInteger(
-																							0);
-	private AtomicBoolean										stopped				= new AtomicBoolean(
-																							false);
-	private int													threads				= Runtime
-																							.getRuntime()
-																							.availableProcessors() * 2;
-	private EventLoopGroup										group				= new NioEventLoopGroup(
-																							threads,
-																							new DefaultThreadFactory(
-																									"HTTP2APNs"));
+	private int											maxSession			= 1;
+	private List<Channel>								sessionStore		= new CopyOnWriteArrayList<Channel>();
+	private AtomicInteger								sessionIdx			= new AtomicInteger(
+																					0);
+	private AtomicBoolean								stopped				= new AtomicBoolean(
+																					false);
+	private int											threads				= Runtime
+																					.getRuntime()
+																					.availableProcessors() * 2;
+	private EventLoopGroup								group				= new NioEventLoopGroup(
+																					threads,
+																					new DefaultThreadFactory(
+																							"HTTP2APNs"));
 	
 	private class ProtocolNegotiationHandlerImpl extends
 			ApplicationProtocolNegotiationHandler {
@@ -180,17 +178,17 @@ public class Http2Client {
 	}
 	
 	public Http2Client(final File p12File, final String password,
-			final APNsCallBack callback, final boolean sandboxEnvironment,
-			int maxSession) throws IOException, KeyStoreException {
-		this(p12File, password, null, callback, sandboxEnvironment, maxSession);
+			final boolean sandboxEnvironment, int maxSession)
+			throws IOException, KeyStoreException {
+		this(p12File, password, null, sandboxEnvironment, maxSession);
 	}
 	
 	public Http2Client(final File p12File, final String password,
-			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final EventLoopGroup eventLoopGroup,
 			final boolean sandboxEnvironment, int maxSession)
 			throws IOException, KeyStoreException {
 		this(SslUtils.getSslContextWithP12File(p12File, password),
-				eventLoopGroup, callback, sandboxEnvironment, maxSession);
+				eventLoopGroup, sandboxEnvironment, maxSession);
 		try (final InputStream p12InputStream = new FileInputStream(p12File)) {
 			loadIdentifiers(SslUtils.loadKeyStore(p12InputStream, password));
 			if (null != this.identities && !this.identities.isEmpty()) {
@@ -200,17 +198,17 @@ public class Http2Client {
 	}
 	
 	public Http2Client(KeyStore keyStore, final String password,
-			final APNsCallBack callback, final boolean sandboxEnvironment,
-			int maxSession) throws KeyStoreException, IOException {
-		this(keyStore, password, null, callback, sandboxEnvironment, maxSession);
+			final boolean sandboxEnvironment, int maxSession)
+			throws KeyStoreException, IOException {
+		this(keyStore, password, null, sandboxEnvironment, maxSession);
 	}
 	
 	public Http2Client(final KeyStore keyStore, final String password,
-			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final EventLoopGroup eventLoopGroup,
 			final boolean sandboxEnvironment, int maxSession)
 			throws KeyStoreException, IOException {
 		this(SslUtils.getSslContextWithP12InputStream(keyStore, password),
-				eventLoopGroup, callback, sandboxEnvironment, maxSession);
+				eventLoopGroup, sandboxEnvironment, maxSession);
 		loadIdentifiers(keyStore);
 		if (null != this.identities && !this.identities.isEmpty()) {
 			name = this.identities.get(0);
@@ -226,26 +224,23 @@ public class Http2Client {
 	
 	public Http2Client(final X509Certificate certificate,
 			final PrivateKey privateKey, final String privateKeyPassword,
-			final APNsCallBack callback, boolean sandboxEnvironment,
-			int maxSession) throws SSLException {
-		this(certificate, privateKey, privateKeyPassword, null, callback,
+			boolean sandboxEnvironment, int maxSession) throws SSLException {
+		this(certificate, privateKey, privateKeyPassword, null,
 				sandboxEnvironment, maxSession);
 	}
 	
 	public Http2Client(final X509Certificate certificate,
 			final PrivateKey privateKey, final String privateKeyPassword,
-			final EventLoopGroup eventLoopGroup, final APNsCallBack callback,
+			final EventLoopGroup eventLoopGroup,
 			final boolean sandboxEnvironment, int maxSession)
 			throws SSLException {
 		this(SslUtils.getSslContextWithCertificateAndPrivateKey(certificate,
-				privateKey, privateKeyPassword), eventLoopGroup, callback,
+				privateKey, privateKeyPassword), eventLoopGroup,
 				sandboxEnvironment, maxSession);
 	}
 	
 	protected Http2Client(final SslContext sslCtx, final EventLoopGroup group,
-			final APNsCallBack callback, final boolean sandboxEnvironment,
-			int maxSession) {
-		this.callback = callback;
+			final boolean sandboxEnvironment, int maxSession) {
 		this.maxSession = maxSession;
 		if (sandboxEnvironment) {
 			this.host = HttpProperties.DEVELOPMENT_APNS_HOST;
@@ -313,6 +308,16 @@ public class Http2Client {
 		if (null != exec) {
 			exec.shutdown();
 		}
+		
+		if (null != group) {
+			group.shutdownGracefully();
+		}
+		
+		if (null != sessionStore && !sessionStore.isEmpty()) {
+			for (Channel channel : sessionStore) {
+				channel.close();
+			}
+		}
 	}
 	
 	private void doScheduleNextConnect() {
@@ -362,6 +367,7 @@ public class Http2Client {
 							public void run() {
 								onConnectComplete(future);
 							}
+							
 						});
 					} else {
 						LOG.warn("APNs not connected. begin reconnect ...");
@@ -386,6 +392,12 @@ public class Http2Client {
 	}
 	
 	public final void addChannel(final Channel channel) {
+		if (sessionStore.size() >= maxSession) {
+			channel.close();
+			LOG.info("not add channel=[{}] into sessionStore full.", channel);
+			return;
+		}
+		
 		sessionStore.add(channel);
 		LOG.info("add channel=[{}] into sessionStore.", channel);
 	}
@@ -435,7 +447,8 @@ public class Http2Client {
 		return sessionStore.get(idx);
 	}
 	
-	public void sendNotification(final PushNotification notification) {
+	public void sendNotification(final PushNotification notification,
+			final APNsCallBack callback) {
 		// final long notificationId = this.nextId.getAndIncrement();
 		
 		verifyTopic(notification);
@@ -443,16 +456,18 @@ public class Http2Client {
 		final Channel channel = next();
 		
 		if (channel != null && channel.isActive() && channel.isWritable()) {
-			final DefaultPromise<PushResponse> promise = new DefaultPromise<PushResponse>(
-					channel.eventLoop());
 			
 			// filter notification already request
 			if (Http2Client.this.responsePromises.containsKey(notification)) {
 				String fmt = name
 						+ "-> The given notification has already been sent and not yet resolved.";
-				promise.setFailure(new IllegalStateException(fmt));
+				
+				final boolean success = false;
+				final DefaultPushResponse response = new DefaultPushResponse(
+						notification, success, fmt, null);
+				callback.response(response);
 			} else {
-				Http2Client.this.responsePromises.put(notification, promise);
+				Http2Client.this.responsePromises.put(notification, callback);
 			}
 			
 			// write notification
@@ -467,8 +482,14 @@ public class Http2Client {
 								name, notification, future.cause());
 						
 						Http2Client.this.responsePromises.remove(notification);
-						promise.tryFailure(future.cause());
-						// TODO callback failure
+						
+						final boolean success = false;
+						final DefaultPushResponse response = new DefaultPushResponse(
+								notification, success, future.cause()
+										.getMessage(), null);
+						
+						// callback
+						callback.response(response);
 					} else {
 						LOG.info("Successed to write push notification: {}",
 								notification);
@@ -489,15 +510,13 @@ public class Http2Client {
 	void handleNotificationResponse(final PushResponse response) {
 		LOG.debug("Received response from APNs gateway: {}", response);
 		if (response.getNotification() != null) {
-			this.responsePromises.remove(response.getNotification())
-					.setSuccess(response);
+			final APNsCallBack callback = this.responsePromises.remove(response
+					.getNotification());
+			callback.response(response);
 		} else {
 			this.responsePromises.clear();
 		}
 		
-		if (null != this.callback) {
-			this.callback.response(response);
-		}
 	}
 	
 }

@@ -24,23 +24,14 @@ import br.com.zup.push.notification.Notification;
  */
 public class Test {
 	
-	static class HTTP2APNsCallBack implements APNsCallBack {
-		@Override
-		public void response(PushResponse resp) {
-			// 异步回调
-			System.out.println(resp);
-		}
-	}
-	
 	public static void main(String[] args) throws SSLException,
 			ExecutionException, CertificateNotValidException,
 			InterruptedException {
 		
-		// com.hikvision.videogo-12
-		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\distribution.p12";
+		String filePath = "";
 		File certificateFile = new File(filePath);
-		APNsClient client = new APNsClient(certificateFile, "hikvision",
-				new HTTP2APNsCallBack(), false, 4);
+		APNsClient client = new APNsClient(certificateFile, "", true,
+				10);
 		
 		client.start();
 		
@@ -66,14 +57,22 @@ public class Test {
 							// .alertTitle("我是测试的标题")
 							// .alertBody(
 							// "d83dde04 我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的我是来测试超长内容的")
-							.alert("我是测试内容 i="+i)
-							//.badge(22)
+							.alert("我是测试内容 i=" + i)
+							// .badge(22)
 							.sound("default.caf")
 							.customField(
 									"ext",
 									"1,2016-07-28 16:55:14,0,1,10000, shipin7://rtsp://183.136.184.7:8554/demo://580145213:2:1:1:0:cas.ys7.com:65000&subserial=580145213&channelno=2&squareid=881880,,,,0")
 							.build();
-					client.send(n.getPayload(), n.getToken());
+					client.send(n.getToken(), n.getPayload(),
+							new APNsCallBack() {
+								
+								@Override
+								public void response(PushResponse response) {
+									System.out.println(response);
+								}
+							});
+					
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 				}
