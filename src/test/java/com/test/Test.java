@@ -28,9 +28,9 @@ public class Test {
 			ExecutionException, CertificateNotValidException,
 			InterruptedException {
 		// com.hikvision.videogo-12
-		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\videogo_12_distribution.p12";
+		String filePath = "/Users/zhaohaolin/git/apns-http2/src/test/java/distribution.p12";
 		File certificateFile = new File(filePath);
-		APNsClient client = new APNsClient(certificateFile, "",
+		APNsClient client = new APNsClient(certificateFile, "hikvision",
 				new APNsCallBack() {
 					
 					@Override
@@ -42,6 +42,8 @@ public class Test {
 				}, false, 1);
 		
 		client.start();
+		
+		//Thread.sleep(1000);
 		
 		// 94b8e0dcfc406b62f3c87b5701d0c8d1af98a70319c825e8d04bc1cc7d9053c3
 		// zhaohaolin iphone
@@ -68,7 +70,7 @@ public class Test {
 		
 		// async
 		{
-			for (int i = 0; i < 10; i++) {
+			for (int i = 0; i < 1; i++) {
 				try {
 					client.send(n.getPayload(), n.getToken());
 				} catch (InterruptedException e) {
