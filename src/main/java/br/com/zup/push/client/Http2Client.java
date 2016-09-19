@@ -61,12 +61,12 @@ import br.com.zup.push.util.P12Util;
 
 public class Http2Client {
 	
-	// private static:
+	// private static class fields:
+	private static final Logger							LOG					= LoggerFactory
+																					.getLogger(Http2Client.class);
 	private static final ScheduledExecutorService		exec				= Executors
 																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
 																							"APNsSession"));
-	private static final Logger							LOG					= LoggerFactory
-																					.getLogger(Http2Client.class);
 	
 	// private final:
 	private final Bootstrap								bootstrap;
@@ -305,10 +305,6 @@ public class Http2Client {
 	}
 	
 	public final synchronized void stop() {
-		if (null != exec) {
-			exec.shutdown();
-		}
-		
 		if (null != group) {
 			group.shutdownGracefully();
 		}
