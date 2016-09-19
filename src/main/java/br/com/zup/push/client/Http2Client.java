@@ -62,13 +62,13 @@ import br.com.zup.push.util.P12Util;
 public class Http2Client {
 	
 	// private static:
-	private static final ScheduledExecutorService		exec				= Executors
-																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
-																							"APNsSession"));
 	private static final Logger							LOG					= LoggerFactory
 																					.getLogger(Http2Client.class);
 	
 	// private final:
+	private final ScheduledExecutorService				exec				= Executors
+																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
+																							"APNsSession"));
 	private final Bootstrap								bootstrap;
 	private final Map<PushNotification, APNsCallBack>	responsePromises	= new IdentityHashMap<PushNotification, APNsCallBack>();
 	
