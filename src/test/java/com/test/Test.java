@@ -28,9 +28,9 @@ public class Test {
 			ExecutionException, CertificateNotValidException,
 			InterruptedException {
 		
-		String filePath = "";
+		String filePath = "C:\\Users\\zhaohaolin.HIK\\git\\apns-http2-1\\src\\test\\java\\distribution.p12";
 		File certificateFile = new File(filePath);
-		APNsClient client = new APNsClient(certificateFile, "", true,
+		APNsClient client = new APNsClient(certificateFile, "hikvision", true,
 				10);
 		
 		client.start();
@@ -50,7 +50,7 @@ public class Test {
 		
 		// async
 		{
-			for (int i = 0; i < 10; i++) {
+			for (int i = 0; i < 1_000; i++) {
 				try {
 					Notification n = new Notification.Builder(
 							"1bc49dd4bcb256fedc838810870e827dd2ae04c4a0a2a17f2d34971b18685fc7")
@@ -72,6 +72,8 @@ public class Test {
 									System.out.println(response);
 								}
 							});
+					
+					Thread.sleep(100);
 					
 				} catch (InterruptedException e) {
 					e.printStackTrace();

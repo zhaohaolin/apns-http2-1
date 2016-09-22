@@ -67,8 +67,6 @@ public class Http2Client {
 	private static final ScheduledExecutorService		exec				= Executors
 																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
 																							"APNsSession"));
-	
-	// private final:
 	private final Bootstrap								bootstrap;
 	private final Map<PushNotification, APNsCallBack>	responsePromises	= new IdentityHashMap<PushNotification, APNsCallBack>();
 	
