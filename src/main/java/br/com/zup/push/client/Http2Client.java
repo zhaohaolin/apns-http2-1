@@ -64,12 +64,11 @@ public class Http2Client {
 	// private static class fields:
 	private static final Logger							LOG					= LoggerFactory
 																					.getLogger(Http2Client.class);
-	private static final ScheduledExecutorService		exec				= Executors
-																					.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
-																							"APNsSession"));
 	private final Bootstrap								bootstrap;
 	private final Map<PushNotification, APNsCallBack>	responsePromises	= new IdentityHashMap<PushNotification, APNsCallBack>();
 	
+	// 每个client一个线程池，进行隔离操作
+	private ScheduledExecutorService					exec;
 	// private volatile：
 	private volatile ProxyHandlerFactory				proxyHandlerFactory;
 	
@@ -239,6 +238,12 @@ public class Http2Client {
 	
 	protected Http2Client(final SslContext sslCtx, final EventLoopGroup group,
 			final boolean sandboxEnvironment, int maxSession) {
+		//
+		String threadName = "APNsSession-[" + name + "]";
+		exec = Executors
+				.newSingleThreadScheduledExecutor(new DefaultThreadFactory(
+						threadName));
+		
 		this.maxSession = maxSession;
 		if (sandboxEnvironment) {
 			this.host = HttpProperties.DEVELOPMENT_APNS_HOST;
